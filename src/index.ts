@@ -407,13 +407,20 @@ async function resolveTicket(ticketTs: string, resolver: string, client, logger,
 
 // Listen for messages in the help channel to create tickets
 app.event('message', async ({ event, client, logger }) => {
-    // Only process new messages in the help channel (not thread replies)
     if (event.channel !== HELP_CHANNEL || (event as any).thread_ts) return;
-    if ((event as any).subtype) return; // Skip edited messages, etc.
+    
+    // but allow images uploads 
+    if ((event as any).subtype && (event as any).subtype !== 'file_share') return;
 
     const message = event as { text: string; ts: string; channel: string; user: string };
+    
+    // non-empty text
+    if (!message.text && (event as any).subtype === 'file_share') {
+        message.text = "[Image/File uploaded]";
+    }
+    
     await createTicket(message, client, logger);
-    // send welcome message
+    // send message
     await client.chat.postMessage({
         channel: event.channel,
         thread_ts: event.ts,

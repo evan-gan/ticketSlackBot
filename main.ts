@@ -3,12 +3,14 @@ import { App, LogLevel } from '@slack/bolt';
 import * as dotenv from 'dotenv';
 import * as fs from 'fs-extra';
 import * as path from 'path';
+import { MongoClient } from 'mongodb';
 dotenv.config();
 const faqData = fs.readFileSync("lib/faq.md").toString()
 const detailsData = fs.readFileSync("lib/details.md").toString() // Added details.md
 // Define channel IDs from env vars
 const HELP_CHANNEL = process.env.HELP_CHANNEL!;
 const TICKETS_CHANNEL = process.env.TICKETS_CHANNEL!;
+const CREW_CHANNEL = process.env.CREW_CHANNEL;
 const DATA_FILE_PATH = path.join(__dirname, 'ticket-data.json');
 const AI_ENDPOINT = process.env.AI_ENDPOINT || 'error: AI_ENDPOINT not set';
 
@@ -40,48 +42,72 @@ const ticketsByOriginalTs: Record<string, string> = {};
 
 // evan this concerns me, why are we saving data in json :heavysob:
 let lbForToday: LBEntry[] = []
-// Function to save ticket data to a file
+
+const MONGO_URI = process.env.MONGO_URI!;
+const MONGO_DB = process.env.MONGO_DB || 'siege_helper';
+const MONGO_COLLECTION = process.env.MONGO_COLLECTION || 'tickets';
+
+let mongoClient: MongoClient;
+let ticketsCollection: any;
+
+async function connectMongo() {
+    mongoClient = new MongoClient(MONGO_URI);
+    await mongoClient.connect();
+    const db = mongoClient.db(MONGO_DB);
+    ticketsCollection = db.collection(MONGO_COLLECTION);
+}
+
+// Replace saveTicketData with MongoDB upsert
 async function saveTicketData() {
     try {
-        const data = {
-            tickets,
-            ticketsByOriginalTs,
-            lbForToday
-        };
-        await fs.writeJSON(DATA_FILE_PATH, data, { spaces: 2 });
-        console.log('Ticket data saved to file');
+        // Save all tickets
+        for (const [ticketTs, ticket] of Object.entries(tickets)) {
+            await ticketsCollection.updateOne(
+                { ticketMessageTs: ticketTs },
+                { $set: ticket },
+                { upsert: true }
+            );
+        }
+        // Save ticketsByOriginalTs mapping
+        await ticketsCollection.updateOne(
+            { _id: 'ticketsByOriginalTs' },
+            { $set: { mapping: ticketsByOriginalTs } },
+            { upsert: true }
+        );
+        // Save lbForToday
+        await ticketsCollection.updateOne(
+            { _id: 'lbForToday' },
+            { $set: { lb: lbForToday } },
+            { upsert: true }
+        );
+        console.log('Ticket data saved to MongoDB');
     } catch (error) {
-        console.error('Error saving ticket data to file:', error);
+        console.error('Error saving ticket data to MongoDB:', error);
     }
 }
 
-// Function to load ticket data from a file
+// Replace loadTicketData with MongoDB fetch
 async function loadTicketData() {
     try {
-        if (await fs.pathExists(DATA_FILE_PATH)) {
-            const data = await fs.readJSON(DATA_FILE_PATH);
+        const allTickets = await ticketsCollection.find({ ticketMessageTs: { $exists: true } }).toArray();
+        Object.keys(tickets).forEach(key => delete tickets[key]);
+        allTickets.forEach(ticket => {
+            tickets[ticket.ticketMessageTs] = ticket;
+        });
 
-            // Clear existing data first
-            Object.keys(tickets).forEach(key => delete tickets[key]);
-            Object.keys(ticketsByOriginalTs).forEach(key => delete ticketsByOriginalTs[key]);
-            lbForToday = []
-            // Load data from file
-            if (data.tickets) {
-                Object.assign(tickets, data.tickets);
-            }
-            if (data.ticketsByOriginalTs) {
-                Object.assign(ticketsByOriginalTs, data.ticketsByOriginalTs);
-            }
-            if (data.lbForToday) {
-                lbForToday = data.lbForToday
-            }
-
-            console.log(`Loaded ${Object.keys(tickets).length} tickets from file`);
-            return true;
+        const mappingDoc = await ticketsCollection.findOne({ _id: 'ticketsByOriginalTs' });
+        Object.keys(ticketsByOriginalTs).forEach(key => delete ticketsByOriginalTs[key]);
+        if (mappingDoc && mappingDoc.mapping) {
+            Object.assign(ticketsByOriginalTs, mappingDoc.mapping);
         }
-        return false;
+
+        const lbDoc = await ticketsCollection.findOne({ _id: 'lbForToday' });
+        lbForToday = lbDoc && lbDoc.lb ? lbDoc.lb : [];
+
+        console.log(`Loaded ${Object.keys(tickets).length} tickets from MongoDB`);
+        return true;
     } catch (error) {
-        console.error('Error loading ticket data from file:', error);
+        console.error('Error loading ticket data from MongoDB:', error);
         return false;
     }
 }
@@ -191,7 +217,7 @@ function createTicketBlocks(AIQuickResponse: string, originalMessageChannelID: s
 async function refreshTicketChannelMembers(client) {
     try {
         const result = await client.conversations.members({
-            channel: TICKETS_CHANNEL
+            channel: CREW_CHANNEL
         });
 
         if (result.ok && result.members) {
@@ -409,8 +435,15 @@ app.event('message', async ({ event, client, logger }) => {
     await client.chat.postMessage({
         channel: event.channel,
         thread_ts: event.ts,
-        text: `:hii: Thank you for creating a ticket someone will help you soon. make sure to read the <https://hackclub.slack.com/docs/T0266FRGM/F08NW544FMM|Faq> and the "README before asking questions" section!`
-    })
+        text: `:hii: Thank you for creating a ticket someone will help you soon. make sure to read the <https://hackclub.slack.com/docs/T0266FRGM/F099PKQR3UK|Faq>`
+    });
+    // react to the message with a thinking face
+    client.reactions.add({
+        name: "thinking_face",
+        timestamp: event.ts,
+        channel: event.channel,
+    });
+
 });
 
 // Listen for thread replies in the help channel to handle claims
@@ -596,6 +629,11 @@ app.event('reaction_added', async ({ event, client, logger }) => {
                         timestamp: reactionEvent.item.ts,
                         channel: reactionEvent.item.channel,
                     });
+                    client.reactions.remove({
+                        name: "thinking_face",
+                        timestamp: reactionEvent.item.ts,
+                        channel: reactionEvent.item.channel,
+                    });
                 }
             } else {
                 logger.info(`User ${reactionEvent.user} tried to resolve a ticket via reaction but is not authorized`);
@@ -628,7 +666,7 @@ async function fetchAIResponse(userInput) {
 }
 async function sendLB() {
     app.client.chat.postMessage({
-        channel: TICKETS_CHANNEL,
+        channel: CREW_CHANNEL,
         text: `Todays top 10 for ticket closes:\n${lbForToday.sort((a, b) => b.count_of_tickets - a.count_of_tickets).map((e, i) => `${i + 1} - <@${e.slack_id}> resolved *${e.count_of_tickets}* today!\n`)}`
     })
     lbForToday = []
@@ -637,7 +675,7 @@ async function sendLB() {
 
 // Start the app
 (async () => {
-    // Load ticket data from file before starting the app
+    await connectMongo(); // Connect to MongoDB first
     await loadTicketData();
 
     await app.start();

@@ -385,7 +385,7 @@ async function resolveTicket(ticketTs: string, resolver: string, client, logger)
                 await client.chat.postMessage({
                     channel: ticket.originalChannel,
                     thread_ts: ticket.originalTs,
-                    text: `This ticket has been marked as resolved. Please send a new message in <#${HELP_CHANNEL}> to create a new ticket. (new ticket = faster response)`
+                    text: `Ticket Marked as Resolved! :yay: \n Please send a new message in <#${HELP_CHANNEL}> to create a new ticket and someone'll be happy to help you out! (new ticket = faster response)`
                 });
             }
         } catch (error) {
@@ -435,7 +435,7 @@ app.event('message', async ({ event, client, logger }) => {
     await client.chat.postMessage({
         channel: event.channel,
         thread_ts: event.ts,
-        text: `:hii: Thank you for creating a ticket someone will help you soon. make sure to read the <https://hackclub.slack.com/docs/T0266FRGM/F099PKQR3UK|Faq>`
+        text: `:hyper-dino-wave: Someone should be along to help you soon! Make sure to read the <https://hackclub.slack.com/docs/T0266FRGM/F099PKQR3UK|Faq> till then!`
     });
     // react to the message with a thinking face
     client.reactions.add({

@@ -16,4 +16,5 @@ That's about it. More features to come!
 12. Select all the options from the dropdown and name your token
 13. Click generate and copy it (starts with `xapp-`) and put it in the .env
 14. Add the main chanel and ticket channel ID's to the .env _Note: you MUST add the bot to both channels_
-15. Run `npm start`
+15. Make a Mongodb and link it up!
+16. Run `npm start`

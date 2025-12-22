@@ -1,5 +1,5 @@
 display_information:
-  name: Help Ticket Bot
+  name: New ticketing bot
   description: Manages help tickets and assigns them to team members.
   background_color: "#3076a6"
 features:

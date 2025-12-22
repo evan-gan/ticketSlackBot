@@ -2,11 +2,14 @@
     "name": "supportslackbot",
     "version": "1.0.0",
     "description": "",
-    "main": "index.js",
+    "main": "dist/src/main.js",
     "scripts": {
       "test": "echo \"Error: no test specified\" && exit 1",
-      "start": "npm install; npx tsx ./main.ts"
+      "start": "pnpm install && pnpm tsx ./src/main.ts",
+      "build": "tsc",
+      "dev": "pnpm tsx watch ./src/main.ts"
     },
+    "packageManager": "pnpm@9.0.0",
     "author": "",
     "license": "ISC",
     "dependencies": {

@@ -8,6 +8,7 @@ import {
   addResolution,
   getQueueMessageTs,
   setQueueMessageTs,
+  isTicketChannelMember,
 } from './data';
 import { GRACE_PERIOD_MS, TICKET_RESOLVED_MESSAGE } from './constants';
 import { createWelcomeBlocks, getThreadUrl, createQueueMessageText } from './utils';
@@ -47,8 +48,8 @@ export async function createTicket(
         inQueue: true,
       };
 
-      tickets[message.ts] = ticketInfo;
-      ticketsByOriginalTs[message.ts] = message.ts;
+      tickets[welcomeResult.ts] = ticketInfo;
+      ticketsByOriginalTs[message.ts] = welcomeResult.ts;
 
       console.info(`✅ Ticket created for message ${message.ts}`);
 
@@ -176,8 +177,11 @@ export async function resolveTicket(
       }
     }
 
-    // Post closure message if staff is last responder
-    if (ticket.lastResponderId && ticket.responders.includes(ticket.lastResponderId)) {
+    // Post closure message if staff is resolving or was the last responder
+    const isStaffResolver = isTicketChannelMember(resolverId);
+    const lastResponderWasStaff = ticket.lastResponderId && ticket.responders.includes(ticket.lastResponderId);
+
+    if (isStaffResolver || lastResponderWasStaff) {
       const closureResult: any = await rateLimitedCall('chat.postMessage', () =>
         client.chat.postMessage({
           channel: ticket.originalChannel,
@@ -266,7 +270,8 @@ export async function unresolveTicket(
  */
 export async function updateQueueMessage(
   client: any,
-  logger: any
+  logger: any,
+  forceRepost: boolean = false
 ): Promise<boolean> {
   try {
     const ticketsChannel = process.env.TICKETS_CHANNEL;
@@ -282,6 +287,23 @@ export async function updateQueueMessage(
 
     const queueText = createQueueMessageText(ticketsInQueue);
     const currentQueueTs = getQueueMessageTs();
+
+    if (currentQueueTs && !forceRepost) {
+      // Update existing message
+      try {
+        await rateLimitedCall('chat.update', () =>
+          client.chat.update({
+            channel: ticketsChannel,
+            ts: currentQueueTs,
+            text: queueText,
+          })
+        );
+        return true;
+      } catch (error) {
+        logger.warn('Failed to update queue message, will try reposting:', error);
+        // Fall through to reposting logic
+      }
+    }
 
     // Delete old queue message if it exists
     if (currentQueueTs) {

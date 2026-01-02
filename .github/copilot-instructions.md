@@ -12,7 +12,6 @@ This is a Slack bot that manages a sophisticated ticketing system with automatic
   - Handles startup and initialization sequence
 
 - **`src/slack.ts`**: Slack event handlers
-  - Manages help staff member cache
   - Handles message events (ticket creation, thread replies)
   - Processes button clicks and reactions
   - Posts daily leaderboard
@@ -21,9 +20,9 @@ This is a Slack bot that manages a sophisticated ticketing system with automatic
   - `createTicket()`: Creates new tickets from help channel messages
   - `handleStaffResponse()`: Processes help staff replies (adds to responders, manages timers)
   - `handleUserResponse()`: Processes regular user replies
-  - `resolveTicket()`: Marks tickets as resolved (adds reaction, posts closure message)
+  - `resolveTicket()`: Marks tickets as resolved (adds reaction, posts closure message if staff resolves or was last responder)
   - `unresolveTicket()`: Reverses resolution (removes reaction, deletes closure message)
-  - `updateQueueMessage()`: Manages the pinned queue message in tickets channel
+  - `updateQueueMessage()`: Manages the pinned queue message in tickets channel (updates in place by default, can force repost)
   - `checkGraceTimers()`: Background job that checks expired timers
 
 - **`src/startupRecovery.ts`**: Startup recovery and missed message handling
@@ -35,6 +34,7 @@ This is a Slack bot that manages a sophisticated ticketing system with automatic
 - **`src/data.ts`**: Data structures and persistence
   - `TicketInfo`: Main ticket data structure
   - In-memory storage with PostgreSQL persistence
+  - Manages help staff member cache (`ticketChannelMembers`)
   - Leaderboard tracking
   - Tracks last processed message timestamp for recovery
   - Helper functions for data access
@@ -107,7 +107,7 @@ This is a Slack bot that manages a sophisticated ticketing system with automatic
 - Resolution actions:
   - Set `resolved` = true
   - Add white checkmark reaction
-  - Post closure message if staff is last responder
+  - Post closure message if staff resolves or was last responder
   - Remove from queue
   - Update leaderboard
 
@@ -126,6 +126,7 @@ This is a Slack bot that manages a sophisticated ticketing system with automatic
   - "Not claimed - View Thread" (no responders)
   - "Claimed by: @user1, @user2 - View Thread" (has responders)
 - Created/updated via `updateQueueMessage()`
+- Updates in place by default, can force repost to keep at bottom when users message in channel
 
 ### 8. Startup Recovery
 - **Missed Message Scanning**: On startup, scans help channel for messages posted while bot was offline

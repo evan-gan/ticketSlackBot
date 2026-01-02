@@ -5,6 +5,8 @@ import {
   resetLeaderboard,
   saveTicketData,
   setLastProcessedMessageTs,
+  setTicketChannelMembers,
+  isTicketChannelMember,
 } from './data';
 import { STARTUP_MESSAGE } from './constants';
 import { rateLimitedCall } from './rateLimiter';
@@ -15,9 +17,6 @@ import {
   resolveTicket,
   updateQueueMessage,
 } from './tickets';
-
-// Cache of user IDs who have access to the tickets channel (help staff)
-let ticketChannelMembers: string[] = [];
 
 // Bot's own user ID to filter out bot messages
 let botUserId: string | null = null;
@@ -56,8 +55,8 @@ export async function refreshTicketChannelMembers(client: any): Promise<boolean>
     );
 
     if (result.ok && result.members) {
-      ticketChannelMembers = result.members;
-      console.log(`✅ Found ${ticketChannelMembers.length} members in tickets channel`);
+      setTicketChannelMembers(result.members);
+      console.log(`✅ Found ${result.members.length} members in tickets channel`);
       return true;
     }
     
@@ -68,13 +67,6 @@ export async function refreshTicketChannelMembers(client: any): Promise<boolean>
     console.error('   Make sure the bot has access to the channel and the TICKETS_CHANNEL ID is correct');
     return false;
   }
-}
-
-/**
- * Checks if a user is a member of the tickets channel (i.e., help staff).
- */
-export function isTicketChannelMember(userId: string): boolean {
-  return ticketChannelMembers.includes(userId);
 }
 
 /**
@@ -142,7 +134,7 @@ export function registerSlackHandlers(app: App) {
     logger.info(`📌 User message detected in tickets channel, reposting queue message`);
     
     // Repost queue message to keep it at the bottom
-    await updateQueueMessage(client, logger);
+    await updateQueueMessage(client, logger, true);
   });
 
   // Listen for thread replies to handle staff responses and user responses

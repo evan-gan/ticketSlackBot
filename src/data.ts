@@ -3,6 +3,23 @@ import { GRACE_PERIOD_MS } from './constants';
 
 let pool: Pool;
 
+// Cache of user IDs who have access to the tickets channel (help staff)
+export let ticketChannelMembers: string[] = [];
+
+/**
+ * Checks if a user is a member of the tickets channel (i.e., help staff).
+ */
+export function isTicketChannelMember(userId: string): boolean {
+  return ticketChannelMembers.includes(userId);
+}
+
+/**
+ * Updates the cache of ticket channel members.
+ */
+export function setTicketChannelMembers(members: string[]) {
+  ticketChannelMembers = members;
+}
+
 /**
  * Gets the database connection pool, initializing it if necessary.
  */

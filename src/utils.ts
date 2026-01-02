@@ -1,3 +1,12 @@
+import {
+  WELCOME_MESSAGE_TEXT,
+  RESOLVE_BUTTON_TEXT,
+  ALL_TICKETS_RESOLVED_MESSAGE,
+  QUEUE_MESSAGE_HEADER,
+  UNCLAIMED_TEXT,
+  CLAIMED_TEXT_FORMAT,
+} from './constants';
+
 /**
  * Formats a Slack timestamp for use in URLs by removing the decimal point.
  * Example: "1234567890.123456" -> "1234567890123456"
@@ -7,77 +16,73 @@ export function formatTs(ts: string): string {
 }
 
 /**
- * Creates Slack Block Kit blocks for displaying a ticket with action buttons.
- * @param originalMessageChannelId - The channel ID of the original help message
- * @param originalMessageTs - The timestamp of the original help message
- * @param claimText - Header text showing ticket status (e.g., "Claimed by: <@user>")
- * @param showAIResponse - Whether to display a quick response section (unused, kept for compatibility)
+ * Generates a Slack thread URL.
+ * @param channelId - The channel ID
+ * @param messageTs - The message timestamp
  */
-export function createTicketBlocks(
-  originalMessageChannelId: string,
-  originalMessageTs: string,
-  claimText: string = 'Not Claimed',
-  showAIResponse: boolean = false
-): any[] {
-  const blocks = [
+export function getThreadUrl(channelId: string, messageTs: string): string {
+  return `https://${process.env.SLACK_WORKSPACE_DOMAIN || 'yourworkspace.slack.com'}.slack.com/archives/${channelId}/p${formatTs(messageTs)}`;
+}
+
+/**
+ * Creates Slack Block Kit blocks for the initial welcome message with Resolve button.
+ * This button allows users (both OP and help staff) to mark their issue as resolved.
+ */
+export function createWelcomeBlocks(): any[] {
+  return [
     {
       type: 'section',
       text: {
         type: 'mrkdwn',
-        text: `*${claimText}*`,
+        text: `${WELCOME_MESSAGE_TEXT}`,
       },
+    },
+    {
+      type: 'actions',
+      elements: [
+        {
+          type: 'button',
+          style: 'primary',
+          text: {
+            type: 'plain_text',
+            text: RESOLVE_BUTTON_TEXT,
+            emoji: true,
+          },
+          value: 'resolve_button',
+          action_id: 'resolve_ticket_button',
+        },
+      ],
     },
   ];
+}
 
-  // Add action buttons
-  blocks.push({
-    type: 'actions',
-    // @ts-ignore - Slack types are incomplete
-    elements: [
-      {
-        type: 'button',
-        style: 'primary',
-        text: {
-          type: 'plain_text',
-          text: 'Mark Resolved',
-          emoji: true,
-        },
-        value: 'claim_button',
-        action_id: 'mark_resolved',
-      },
-      {
-        type: 'button',
-        style: 'danger',
-        text: {
-          type: 'plain_text',
-          text: 'Seen, Not Sure',
-          emoji: true,
-        },
-        value: 'not_sure_button',
-        action_id: 'not_sure',
-      },
-      {
-        type: 'users_select',
-        placeholder: {
-          type: 'plain_text',
-          text: 'Assign (will DM assignee)',
-          emoji: true,
-        },
-        action_id: 'assign_user',
-      },
-    ],
+/**
+ * Creates the queue message text that lists all tickets needing help.
+ * @param ticketsInQueue - Array of ticket info for tickets currently in queue
+ */
+export function createQueueMessageText(ticketsInQueue: Array<{ threadUrl: string; responders: string[] }>): string {
+  if (ticketsInQueue.length === 0) {
+    return ALL_TICKETS_RESOLVED_MESSAGE;
+  }
+
+  // Format timestamp as "Last updated: Jan 1, 2026 at 12:34 PM"
+  const now = new Date();
+  const timestamp = now.toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
   });
 
-  // Add link to original thread
-  blocks.push({
-    type: 'section',
-    text: {
-      type: 'mrkdwn',
-      text: `<https://${process.env.SLACK_WORKSPACE_DOMAIN || 'yourworkspace.slack.com'}.slack.com/archives/${originalMessageChannelId}/p${formatTs(
-        originalMessageTs
-      )}|View Thread>`,
-    },
+  let queueText = `${QUEUE_MESSAGE_HEADER}\n_Last updated: ${timestamp}_\n\n`;
+  ticketsInQueue.forEach((ticket, index) => {
+    const claimStatus = ticket.responders.length === 0 
+      ? UNCLAIMED_TEXT
+      : CLAIMED_TEXT_FORMAT.replace('{mentions}', ticket.responders.map(id => `<@${id}>`).join(', '));
+    queueText += `${index + 1}. ${claimStatus} - <${ticket.threadUrl}|View Thread>\n`;
   });
 
-  return blocks;
+  return queueText;
 }

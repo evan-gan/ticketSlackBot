@@ -21,10 +21,12 @@ oauth_config:
       - chat:write.public
       - commands
       - im:write
+      - pins:write
       - reactions:read
       - reactions:write
       - users:read
       - groups:read
+      - groups:history
 settings:
   event_subscriptions:
     bot_events:

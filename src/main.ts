@@ -1,7 +1,14 @@
 import { App, LogLevel } from '@slack/bolt';
 import * as dotenv from 'dotenv';
 import { loadTicketData } from './data';
-import { registerSlackHandlers, refreshTicketChannelMembers, postLeaderboardAndReset, notifyStartup } from './slack';
+import { registerSlackHandlers, refreshTicketChannelMembers, postLeaderboardAndReset, notifyStartup, getBotUserId } from './slack';
+import {
+  TIMER_CHECK_INTERVAL_MS,
+  AUTO_SAVE_INTERVAL_MS,
+  MEMBER_REFRESH_INTERVAL_MS,
+  LEADERBOARD_POST_INTERVAL_MS,
+  STARTUP_NOTIFICATION_USER_ID,
+} from './constants';
 
 dotenv.config();
 
@@ -42,7 +49,12 @@ async function startBot() {
 
     // Send startup notification
     const client = app.client;
-    await notifyStartup(client, 'U05D1G4H754');
+    if (STARTUP_NOTIFICATION_USER_ID) {
+      await notifyStartup(client, STARTUP_NOTIFICATION_USER_ID);
+    }
+
+    // Get bot user ID for message filtering
+    await getBotUserId(client);
 
     // Initialize ticket channel members cache
     const membersLoaded = await refreshTicketChannelMembers(client);
@@ -52,15 +64,31 @@ async function startBot() {
       );
     }
 
-    // Refresh ticket channel members every hour
-    setInterval(() => refreshTicketChannelMembers(client), 60 * 60 * 1000);
+    // Initialize queue message and perform startup recovery
+    const { initializeQueueOnStartup, performStartupRecovery, scanForMissedMessages } = await import('./startupRecovery');
+    await initializeQueueOnStartup(client, console);
+    
+    // Scan for missed messages (must run before regular recovery to catch offline messages)
+    await scanForMissedMessages(client, console);
+    
+    // Run recovery in background (non-blocking)
+    performStartupRecovery(client, console).catch((error) => {
+      console.error('❌ Background recovery failed:', error);
+    });
 
-    // Save ticket data every 5 minutes as a backup
+    // Refresh ticket channel members periodically
+    setInterval(() => refreshTicketChannelMembers(client), MEMBER_REFRESH_INTERVAL_MS);
+
+    // Check grace timers periodically
+    const { checkGraceTimers } = await import('./tickets');
+    setInterval(() => checkGraceTimers(client, console), TIMER_CHECK_INTERVAL_MS);
+
+    // Save ticket data periodically as a backup
     const { saveTicketData } = await import('./data');
-    setInterval(saveTicketData, 5 * 60 * 1000);
+    setInterval(saveTicketData, AUTO_SAVE_INTERVAL_MS);
 
-    // Post daily leaderboard at 11:59 PM and reset for next day
-    setInterval(() => postLeaderboardAndReset(client), 24 * 60 * 60 * 1000);
+    // Post daily leaderboard and reset for next day
+    setInterval(() => postLeaderboardAndReset(client), LEADERBOARD_POST_INTERVAL_MS);
   } catch (error) {
     console.error('❌ Failed to start bot:', error);
     process.exit(1);

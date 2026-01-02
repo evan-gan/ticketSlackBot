@@ -1,21 +1,41 @@
 import { App } from '@slack/bolt';
 import {
   getTicketByOriginalTs,
-  getTicketByTicketTs,
   lbForToday,
   resetLeaderboard,
   saveTicketData,
+  setLastProcessedMessageTs,
 } from './data';
+import { STARTUP_MESSAGE } from './constants';
+import { rateLimitedCall } from './rateLimiter';
 import {
   createTicket,
-  claimTicket,
-  markTicketAsNotSure,
+  handleStaffResponse,
+  handleUserResponse,
   resolveTicket,
+  updateQueueMessage,
 } from './tickets';
-import { formatTs } from './utils';
 
-// Cache of user IDs who have access to the tickets channel
+// Cache of user IDs who have access to the tickets channel (help staff)
 let ticketChannelMembers: string[] = [];
+
+// Bot's own user ID to filter out bot messages
+let botUserId: string | null = null;
+
+/**
+ * Gets and stores the bot's user ID.
+ */
+export async function getBotUserId(client: any): Promise<void> {
+  try {
+    const result = await client.auth.test();
+    if (result.ok && result.user_id) {
+      botUserId = result.user_id;
+      console.log(`🤖 Bot user ID: ${botUserId}`);
+    }
+  } catch (error: any) {
+    console.error('❌ Failed to get bot user ID:', error.message);
+  }
+}
 
 /**
  * Refreshes the cache of ticket channel members by fetching from Slack.
@@ -29,9 +49,11 @@ export async function refreshTicketChannelMembers(client: any): Promise<boolean>
     }
 
     console.log(`📋 Fetching members for channel: ${ticketsChannel}`);
-    const result = await client.conversations.members({
-      channel: ticketsChannel,
-    });
+    const result: any = await rateLimitedCall('conversations.members', () =>
+      client.conversations.members({
+        channel: ticketsChannel,
+      })
+    );
 
     if (result.ok && result.members) {
       ticketChannelMembers = result.members;
@@ -49,7 +71,7 @@ export async function refreshTicketChannelMembers(client: any): Promise<boolean>
 }
 
 /**
- * Checks if a user is a member of the tickets channel.
+ * Checks if a user is a member of the tickets channel (i.e., help staff).
  */
 export function isTicketChannelMember(userId: string): boolean {
   return ticketChannelMembers.includes(userId);
@@ -60,10 +82,12 @@ export function isTicketChannelMember(userId: string): boolean {
  */
 export async function notifyStartup(client: any, userId: string): Promise<boolean> {
   try {
-    await client.chat.postMessage({
-      channel: userId,
-      text: 'Starting!',
-    });
+    await rateLimitedCall('chat.postMessage', () =>
+      client.chat.postMessage({
+        channel: userId,
+        text: STARTUP_MESSAGE,
+      })
+    );
     console.log(`✅ Sent startup notification to <@${userId}>`);
     return true;
   } catch (error: any) {
@@ -91,16 +115,37 @@ export function registerSlackHandlers(app: App) {
 
     const message = event as { text: string; ts: string; channel: string; user: string };
     await createTicket(message, client, logger);
-
-    // Send welcome message
-    await client.chat.postMessage({
-      channel: event.channel,
-      thread_ts: event.ts,
-      text: `:hii: Thank you for creating a ticket. Someone will help you soon. Make sure to read the documentation and the README before asking questions!`,
-    });
+    
+    // Update last processed message timestamp
+    setLastProcessedMessageTs(message.ts);
   });
 
-  // Listen for thread replies to handle claims
+  // Listen for new messages in the tickets channel to repost queue message at bottom
+  app.event('message', async ({ event, client, logger }) => {
+    const message = event as any;
+    
+    // Debug logging
+    if (event.channel === ticketsChannel) {
+      logger.info(`📨 Message in tickets channel - user: ${message.user}, bot_id: ${message.bot_id}, thread: ${message.thread_ts}, subtype: ${message.subtype}`);
+    }
+    
+    // Only process new messages in tickets channel (not thread replies)
+    if (event.channel !== ticketsChannel) return;
+    if (message.thread_ts) return; // Skip thread replies
+    if (message.subtype) return; // Skip edited messages, message_deleted, etc.
+    
+    // Skip bot messages - check if user is the bot itself
+    if (!message.user) return; // No user means it's not a regular message
+    if (message.user === botUserId) return; // Skip messages from the bot itself
+    if (message.bot_id) return; // Skip any bot messages
+    
+    logger.info(`📌 User message detected in tickets channel, reposting queue message`);
+    
+    // Repost queue message to keep it at the bottom
+    await updateQueueMessage(client, logger);
+  });
+
+  // Listen for thread replies to handle staff responses and user responses
   app.event('message', async ({ event, client, logger }) => {
     // Only process thread replies in the help channel
     if (
@@ -111,97 +156,76 @@ export function registerSlackHandlers(app: App) {
       return;
     if ((event as any).subtype) return; // Skip edited messages, etc.
 
-    const threadReply = event as { thread_ts: string; user: string };
+    const threadReply = event as { thread_ts: string; user: string; text?: string };
 
-    // Verify user is in tickets channel before allowing claim
-    if (!isTicketChannelMember(threadReply.user)) {
-      logger.info(`User ${threadReply.user} tried to claim but is not in tickets channel`);
-      return;
-    }
-
-    // Find the ticket and claim it
-    const ticket = getTicketByOriginalTs(threadReply.thread_ts);
-    if (ticket) {
-      const success = await claimTicket(threadReply.user, ticket.ticketMessageTs, client, logger);
-      if (success) {
-        logger.info(`Ticket ${ticket.ticketMessageTs} claimed by ${threadReply.user}`);
-      }
-    }
-  });
-
-  // Handle "Mark Resolved" button
-  app.action('mark_resolved', async ({ body, ack, client, logger }) => {
-    await ack();
-
-    const userId = (body.user || {}).id;
-    if (!isTicketChannelMember(userId)) {
-      logger.info(`User ${userId} tried to resolve but is not in tickets channel`);
-      return;
-    }
-
-    const ticketTs = (body as any).message?.ts;
-    if (!ticketTs) return;
-
-    const success = await resolveTicket(ticketTs, userId, client, logger);
-    if (success) {
-      logger.info(`Ticket ${ticketTs} resolved by ${userId}`);
+    // Check if user is help staff
+    if (isTicketChannelMember(threadReply.user)) {
+      // Help staff response
+      await handleStaffResponse(
+        threadReply.user,
+        threadReply.thread_ts,
+        threadReply.text || '',
+        client,
+        logger
+      );
+    } else {
+      // Regular user response
+      await handleUserResponse(threadReply.thread_ts, client, logger);
     }
   });
 
-  // Handle "Seen, Not Sure" button
-  app.action('not_sure', async ({ body, ack, client, logger }) => {
-    await ack();
-
-    const ticketTs = (body as any).message?.ts;
-    const userId = (body.user || {}).id;
-
-    if (!ticketTs || !userId) return;
-
-    if (!isTicketChannelMember(userId)) {
-      logger.info(`User ${userId} tried to mark "not sure" but is not in tickets channel`);
-      return;
-    }
-
-    const success = await markTicketAsNotSure(userId, ticketTs, client, logger);
-    if (success) {
-      logger.info(`Ticket ${ticketTs} marked as "not sure" by ${userId}`);
-    }
-  });
-
-  // Handle assign user action
-  app.action('assign_user', async ({ body, ack, client, logger }) => {
+  // Handle "Resolve" button from welcome message
+  app.action('resolve_ticket_button', async ({ body, ack, client, logger }) => {
     await ack();
 
     const userId = (body.user || {}).id;
-    if (!isTicketChannelMember(userId)) {
-      logger.info(`User ${userId} tried to assign but is not in tickets channel`);
+    const messageTs = (body as any).message?.thread_ts || (body as any).message?.ts;
+
+    if (!messageTs) return;
+
+    // Find the ticket by original thread timestamp
+    const ticket = getTicketByOriginalTs(messageTs);
+    if (!ticket) {
+      logger.warn(`No ticket found for thread ${messageTs}`);
       return;
     }
 
-    const ticketTs = (body as any).message?.ts;
-    const selectedUser = (body as any).actions?.[0]?.selected_user as string;
-
-    if (!ticketTs || !selectedUser) return;
-
-    const ticket = getTicketByTicketTs(ticketTs);
-    if (!ticket) return;
-
+    // Verify user is either thread OP or help staff
     try {
-      // Send DM to assigned user
-      await client.chat.postMessage({
-        channel: selectedUser,
-        text: `You have been assigned a ticket. Please check it out and claim it by replying.\n<https://${
-          process.env.SLACK_WORKSPACE_DOMAIN || 'yourworkspace.slack.com'
-        }.slack.com/archives/${ticketsChannel}/p${formatTs(ticket.ticketMessageTs)}|View Ticket>`,
-      });
+      const messageInfo = await rateLimitedCall('conversations.history', () =>
+        client.conversations.history({
+          channel: ticket.originalChannel,
+          latest: ticket.originalTs,
+          limit: 1,
+          inclusive: true,
+        })
+      );
 
-      logger.info(`User ${selectedUser} assigned ticket ${ticketTs}`);
+      const isOriginalAuthor =
+        messageInfo.messages &&
+        messageInfo.messages[0] &&
+        messageInfo.messages[0].user === userId;
+
+      if (isOriginalAuthor || isTicketChannelMember(userId)) {
+        const success = await resolveTicket(ticket, userId, client, logger);
+        if (success) {
+          logger.info(
+            `Ticket ${ticket.originalTs} resolved via button by ${userId} (${
+              isOriginalAuthor ? 'original author' : 'help staff'
+            })`
+          );
+        }
+      } else {
+        logger.info(
+          `User ${userId} tried to resolve ticket but is neither OP nor help staff`
+        );
+      }
     } catch (error) {
-      logger.error('❌ Error assigning ticket:', error);
+      logger.error('❌ Error handling resolve button:', error);
     }
   });
 
-  // Handle check mark reaction to resolve tickets
+  // Handle check mark reaction to resolve tickets (alternative method)
   app.event('reaction_added', async ({ event, client, logger }) => {
     const reactionEvent = event as {
       reaction: string;
@@ -214,24 +238,19 @@ export function registerSlackHandlers(app: App) {
       return;
     }
 
-    if (!isTicketChannelMember(reactionEvent.user)) {
-      logger.info(
-        `User ${reactionEvent.user} tried to resolve via reaction but is not in tickets channel`
-      );
-      return;
-    }
-
     const ticket = getTicketByOriginalTs(reactionEvent.item.ts);
     if (!ticket) return;
 
     try {
-      // Verify user is the original message author or in tickets channel
-      const messageInfo = await client.conversations.history({
-        channel: reactionEvent.item.channel,
-        latest: reactionEvent.item.ts,
-        limit: 1,
-        inclusive: true,
-      });
+      // Verify user is the original message author or help staff
+      const messageInfo = await rateLimitedCall('conversations.history', () =>
+        client.conversations.history({
+          channel: reactionEvent.item.channel,
+          latest: reactionEvent.item.ts,
+          limit: 1,
+          inclusive: true,
+        })
+      );
 
       const isOriginalAuthor =
         messageInfo.messages &&
@@ -239,23 +258,13 @@ export function registerSlackHandlers(app: App) {
         messageInfo.messages[0].user === reactionEvent.user;
 
       if (isOriginalAuthor || isTicketChannelMember(reactionEvent.user)) {
-        const success = await resolveTicket(
-          ticket.ticketMessageTs,
-          reactionEvent.user,
-          client,
-          logger
-        );
+        const success = await resolveTicket(ticket, reactionEvent.user, client, logger);
         if (success) {
           logger.info(
             `Ticket resolved via reaction by ${reactionEvent.user} (${
-              isOriginalAuthor ? 'original author' : 'support member'
+              isOriginalAuthor ? 'original author' : 'help staff'
             })`
           );
-          await client.reactions.add({
-            name: 'white_check_mark',
-            timestamp: reactionEvent.item.ts,
-            channel: reactionEvent.item.channel,
-          });
         }
       }
     } catch (error) {
@@ -285,10 +294,12 @@ export async function postLeaderboardAndReset(client: any) {
       .map((entry, index) => `${index + 1}. <@${entry.slack_id}> resolved *${entry.count_of_tickets}*`)
       .join('\n');
 
-    await client.chat.postMessage({
-      channel: ticketsChannel,
-      text: `📊 Today's Top Resolvers:\n${leaderboardText}`,
-    });
+    await rateLimitedCall('chat.postMessage', () =>
+      client.chat.postMessage({
+        channel: ticketsChannel,
+        text: `📊 Today's Top Resolvers:\n${leaderboardText}`,
+      })
+    );
 
     resetLeaderboard();
     await saveTicketData();

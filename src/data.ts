@@ -1,7 +1,8 @@
 import * as fs from 'fs-extra';
 import * as path from 'path';
+import { GRACE_PERIOD_MS, DATA_FILE_NAME } from './constants';
 
-const DATA_FILE_PATH = path.join(__dirname, '../ticket-data.json');
+const DATA_FILE_PATH = path.join(__dirname, '..', DATA_FILE_NAME);
 
 /**
  * Represents information about a ticket created from a help channel message.
@@ -10,8 +11,20 @@ export interface TicketInfo {
   originalChannel: string;
   originalTs: string;
   ticketMessageTs: string;
-  claimers: string[];
-  notSure: string[];
+  // List of help staff members who have responded to this ticket
+  responders: string[];
+  // Whether ticket is currently marked as resolved
+  resolved: boolean;
+  // Timestamp when the grace period timer should expire (null if no timer active)
+  graceTimerExpiry: number | null;
+  // Whether the ticket is force-kept open with !open command
+  forceOpen: boolean;
+  // Last message author's user ID to track who replied last
+  lastResponderId: string | null;
+  // Whether ticket currently needs help (shown in queue)
+  inQueue: boolean;
+  // The timestamp of the bot's "ticket closed" message (if exists)
+  closureMessageTs?: string;
 }
 
 /**
@@ -31,6 +44,12 @@ export const ticketsByOriginalTs: Record<string, string> = {};
 // Tracks ticket resolutions for the current day's leaderboard
 export let lbForToday: LBEntry[] = [];
 
+// Timestamp of the pinned queue message in the tickets channel
+export let queueMessageTs: string | null = null;
+
+// Timestamp of the last processed message in the help channel (for recovery)
+let lastProcessedMessageTs: string | null = null;
+
 /**
  * Persists all ticket and leaderboard data to disk.
  */
@@ -40,6 +59,8 @@ export async function saveTicketData() {
       tickets,
       ticketsByOriginalTs,
       lbForToday,
+      queueMessageTs,
+      lastProcessedMessageTs,
     };
     await fs.writeJSON(DATA_FILE_PATH, data, { spaces: 2 });
     console.log('✅ Ticket data saved to file');
@@ -71,6 +92,12 @@ export async function loadTicketData(): Promise<boolean> {
       }
       if (data.lbForToday) {
         lbForToday = data.lbForToday;
+      }
+      if (data.queueMessageTs) {
+        queueMessageTs = data.queueMessageTs;
+      }
+      if (data.lastProcessedMessageTs) {
+        lastProcessedMessageTs = data.lastProcessedMessageTs;
       }
 
       console.log(`✅ Loaded ${Object.keys(tickets).length} tickets from file`);
@@ -118,4 +145,32 @@ export function addResolution(userId: string) {
  */
 export function resetLeaderboard() {
   lbForToday = [];
+}
+
+/**
+ * Updates the queue message timestamp.
+ */
+export function setQueueMessageTs(ts: string | null) {
+  queueMessageTs = ts;
+}
+
+/**
+ * Gets the current queue message timestamp.
+ */
+export function getQueueMessageTs(): string | null {
+  return queueMessageTs;
+}
+
+/**
+ * Gets the last processed message timestamp.
+ */
+export function getLastProcessedMessageTs(): string | null {
+  return lastProcessedMessageTs;
+}
+
+/**
+ * Updates the last processed message timestamp.
+ */
+export function setLastProcessedMessageTs(ts: string) {
+  lastProcessedMessageTs = ts;
 }

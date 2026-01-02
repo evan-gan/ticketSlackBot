@@ -1,26 +1,35 @@
 {
-    "name": "supportslackbot",
-    "version": "1.0.0",
-    "description": "",
-    "main": "dist/src/main.js",
-    "scripts": {
-      "test": "echo \"Error: no test specified\" && exit 1",
-      "start": "pnpm install && pnpm tsx ./src/main.ts",
-      "build": "tsc",
-      "dev": "pnpm tsx watch ./src/main.ts"
-    },
-    "packageManager": "pnpm@9.0.0",
-    "author": "",
-    "license": "ISC",
-    "dependencies": {
-      "@slack/bolt": "^3.21.4",
-      "@types/fs-extra": "^11.0.4",
-      "@types/node": "^22.5.5",
-      "date-fns": "^4.1.0",
-      "dotenv": "^16.4.5",
-      "fs-extra": "^11.2.0",
-      "ts-node": "^10.9.2",
-      "tsx": "^4.19.1",
-      "typescript": "^5.6.2"
-    }
+  "name": "supportslackbot",
+  "version": "1.0.0",
+  "description": "",
+  "main": "dist/src/main.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "pnpm install && pnpm tsx ./src/main.ts",
+    "build": "tsc",
+    "dev": "pnpm tsx watch ./src/main.ts",
+    "db:setup": "node db.js setup",
+    "db:start": "node db.js start",
+    "db:stop": "node db.js stop",
+    "db:clean": "node db.js clean",
+    "db:logs": "node db.js logs"
+  },
+  "packageManager": "pnpm@9.0.0",
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@slack/bolt": "^3.21.4",
+    "@types/fs-extra": "^11.0.4",
+    "@types/node": "^22.5.5",
+    "date-fns": "^4.1.0",
+    "dotenv": "^16.4.5",
+    "fs-extra": "^11.2.0",
+    "pg": "^8.16.3",
+    "ts-node": "^10.9.2",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.2"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.16.0"
   }
+}

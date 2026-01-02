@@ -1,8 +1,58 @@
-import * as fs from 'fs-extra';
-import * as path from 'path';
-import { GRACE_PERIOD_MS, DATA_FILE_NAME } from './constants';
+import { Pool } from 'pg';
+import { GRACE_PERIOD_MS } from './constants';
 
-const DATA_FILE_PATH = path.join(__dirname, '..', DATA_FILE_NAME);
+let pool: Pool;
+
+/**
+ * Gets the database connection pool, initializing it if necessary.
+ */
+function getPool(): Pool {
+  if (!pool) {
+    pool = new Pool({
+      connectionString: process.env.DATABASE_URL,
+    });
+  }
+  return pool;
+}
+
+/**
+ * Initializes the PostgreSQL database tables if they don't exist.
+ */
+export async function initDB() {
+  const client = await getPool().connect();
+  try {
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS tickets (
+        ticket_ts TEXT PRIMARY KEY,
+        original_channel TEXT NOT NULL,
+        original_ts TEXT NOT NULL,
+        responders TEXT[] NOT NULL,
+        resolved BOOLEAN NOT NULL,
+        grace_timer_expiry BIGINT,
+        force_open BOOLEAN NOT NULL,
+        last_responder_id TEXT,
+        in_queue BOOLEAN NOT NULL,
+        closure_message_ts TEXT
+      );
+
+      CREATE TABLE IF NOT EXISTS leaderboard (
+        slack_id TEXT PRIMARY KEY,
+        count_of_tickets INTEGER NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS metadata (
+        key TEXT PRIMARY KEY,
+        value TEXT
+      );
+    `);
+    console.log('✅ PostgreSQL tables initialized');
+  } catch (error) {
+    console.error('❌ Error initializing PostgreSQL tables:', error);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
 
 /**
  * Represents information about a ticket created from a help channel message.
@@ -51,61 +101,111 @@ export let queueMessageTs: string | null = null;
 let lastProcessedMessageTs: string | null = null;
 
 /**
- * Persists all ticket and leaderboard data to disk.
+ * Persists all ticket and leaderboard data to PostgreSQL.
  */
 export async function saveTicketData() {
+  const client = await getPool().connect();
   try {
-    const data = {
-      tickets,
-      ticketsByOriginalTs,
-      lbForToday,
-      queueMessageTs,
-      lastProcessedMessageTs,
-    };
-    await fs.writeJSON(DATA_FILE_PATH, data, { spaces: 2 });
-    console.log('✅ Ticket data saved to file');
+    await client.query('BEGIN');
+
+    // Save tickets
+    for (const [ts, ticket] of Object.entries(tickets)) {
+      await client.query(`
+        INSERT INTO tickets (
+          ticket_ts, original_channel, original_ts, responders, resolved, 
+          grace_timer_expiry, force_open, last_responder_id, in_queue, closure_message_ts
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        ON CONFLICT (ticket_ts) DO UPDATE SET
+          original_channel = EXCLUDED.original_channel,
+          original_ts = EXCLUDED.original_ts,
+          responders = EXCLUDED.responders,
+          resolved = EXCLUDED.resolved,
+          grace_timer_expiry = EXCLUDED.grace_timer_expiry,
+          force_open = EXCLUDED.force_open,
+          last_responder_id = EXCLUDED.last_responder_id,
+          in_queue = EXCLUDED.in_queue,
+          closure_message_ts = EXCLUDED.closure_message_ts
+      `, [
+        ts, ticket.originalChannel, ticket.originalTs, ticket.responders, ticket.resolved,
+        ticket.graceTimerExpiry, ticket.forceOpen, ticket.lastResponderId, ticket.inQueue, ticket.closureMessageTs
+      ]);
+    }
+
+    // Save leaderboard
+    await client.query('DELETE FROM leaderboard');
+    for (const entry of lbForToday) {
+      await client.query('INSERT INTO leaderboard (slack_id, count_of_tickets) VALUES ($1, $2)', [entry.slack_id, entry.count_of_tickets]);
+    }
+
+    // Save metadata
+    await client.query("INSERT INTO metadata (key, value) VALUES ('queueMessageTs', $1) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", [queueMessageTs]);
+    await client.query("INSERT INTO metadata (key, value) VALUES ('lastProcessedMessageTs', $1) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", [lastProcessedMessageTs]);
+
+    await client.query('COMMIT');
+    console.log('✅ Ticket data saved to PostgreSQL');
   } catch (error) {
-    console.error('❌ Error saving ticket data to file:', error);
+    await client.query('ROLLBACK');
+    console.error('❌ Error saving ticket data to PostgreSQL:', error);
+  } finally {
+    client.release();
   }
 }
 
 /**
- * Loads all ticket and leaderboard data from disk.
- * Returns true if data was loaded, false if file doesn't exist or on error.
+ * Loads all ticket and leaderboard data from PostgreSQL.
+ * Returns true if data was loaded, false on error.
  */
 export async function loadTicketData(): Promise<boolean> {
   try {
-    if (await fs.pathExists(DATA_FILE_PATH)) {
-      const data = await fs.readJSON(DATA_FILE_PATH);
+    await initDB();
 
+    const client = await getPool().connect();
+    try {
       // Clear existing data first
       Object.keys(tickets).forEach((key) => delete tickets[key]);
       Object.keys(ticketsByOriginalTs).forEach((key) => delete ticketsByOriginalTs[key]);
       lbForToday.length = 0;
 
-      // Load data from file
-      if (data.tickets) {
-        Object.assign(tickets, data.tickets);
-      }
-      if (data.ticketsByOriginalTs) {
-        Object.assign(ticketsByOriginalTs, data.ticketsByOriginalTs);
-      }
-      if (data.lbForToday) {
-        lbForToday = data.lbForToday;
-      }
-      if (data.queueMessageTs) {
-        queueMessageTs = data.queueMessageTs;
-      }
-      if (data.lastProcessedMessageTs) {
-        lastProcessedMessageTs = data.lastProcessedMessageTs;
+      // Load tickets
+      const ticketsRes = await client.query('SELECT * FROM tickets');
+      for (const row of ticketsRes.rows) {
+        const ticket: TicketInfo = {
+          originalChannel: row.original_channel,
+          originalTs: row.original_ts,
+          ticketMessageTs: row.ticket_ts,
+          responders: row.responders,
+          resolved: row.resolved,
+          graceTimerExpiry: row.grace_timer_expiry ? parseInt(row.grace_timer_expiry) : null,
+          forceOpen: row.force_open,
+          lastResponderId: row.last_responder_id,
+          inQueue: row.in_queue,
+          closureMessageTs: row.closure_message_ts,
+        };
+        tickets[row.ticket_ts] = ticket;
+        ticketsByOriginalTs[row.original_ts] = row.ticket_ts;
       }
 
-      console.log(`✅ Loaded ${Object.keys(tickets).length} tickets from file`);
+      // Load leaderboard
+      const lbRes = await client.query('SELECT * FROM leaderboard');
+      lbForToday = lbRes.rows.map(row => ({
+        slack_id: row.slack_id,
+        count_of_tickets: row.count_of_tickets
+      }));
+
+      // Load metadata
+      const metaRes = await client.query('SELECT * FROM metadata');
+      for (const row of metaRes.rows) {
+        if (row.key === 'queueMessageTs') queueMessageTs = row.value;
+        if (row.key === 'lastProcessedMessageTs') lastProcessedMessageTs = row.value;
+      }
+
+      console.log(`✅ Loaded ${Object.keys(tickets).length} tickets from PostgreSQL`);
       return true;
+    } finally {
+      client.release();
     }
-    return false;
   } catch (error) {
-    console.error('❌ Error loading ticket data from file:', error);
+    console.error('❌ Error loading ticket data from PostgreSQL:', error);
     return false;
   }
 }

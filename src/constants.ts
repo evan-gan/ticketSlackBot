@@ -34,11 +34,6 @@ export const TIMER_CHECK_INTERVAL_MS = 30 * 1000;
  */
 export const AUTO_SAVE_INTERVAL_MS = 5 * 60 * 1000;
 
-/**
- * Path to the JSON file where ticket data is persisted.
- */
-export const DATA_FILE_NAME = 'ticket-data.json';
-
 // ============================================
 // SLACK INTEGRATION
 // ============================================

@@ -1,5 +1,7 @@
-import { App, LogLevel } from '@slack/bolt';
 import * as dotenv from 'dotenv';
+dotenv.config();
+
+import { App, LogLevel } from '@slack/bolt';
 import { loadTicketData } from './data';
 import { registerSlackHandlers, refreshTicketChannelMembers, postLeaderboardAndReset, notifyStartup, getBotUserId } from './slack';
 import {
@@ -10,17 +12,16 @@ import {
   STARTUP_NOTIFICATION_USER_ID,
 } from './constants';
 
-dotenv.config();
-
 // Validate required environment variables
 const HELP_CHANNEL = process.env.HELP_CHANNEL;
 const TICKETS_CHANNEL = process.env.TICKETS_CHANNEL;
 const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN;
 const SLACK_APP_TOKEN = process.env.SLACK_APP_TOKEN;
+const DATABASE_URL = process.env.DATABASE_URL;
 
-if (!HELP_CHANNEL || !TICKETS_CHANNEL || !SLACK_BOT_TOKEN || !SLACK_APP_TOKEN) {
+if (!HELP_CHANNEL || !TICKETS_CHANNEL || !SLACK_BOT_TOKEN || !SLACK_APP_TOKEN || !DATABASE_URL) {
   throw new Error(
-    'Missing required environment variables: HELP_CHANNEL, TICKETS_CHANNEL, SLACK_BOT_TOKEN, SLACK_APP_TOKEN'
+    'Missing required environment variables: HELP_CHANNEL, TICKETS_CHANNEL, SLACK_BOT_TOKEN, SLACK_APP_TOKEN, DATABASE_URL'
   );
 }
 

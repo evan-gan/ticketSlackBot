@@ -34,10 +34,11 @@ This is a Slack bot that manages a sophisticated ticketing system with automatic
 
 - **`src/data.ts`**: Data structures and persistence
   - `TicketInfo`: Main ticket data structure
-  - In-memory storage with JSON file persistence
+  - In-memory storage with PostgreSQL persistence
   - Leaderboard tracking
   - Tracks last processed message timestamp for recovery
   - Helper functions for data access
+  - `initDB()`: Initializes PostgreSQL tables
 
 - **`src/utils.ts`**: Utility functions
   - Message formatting functions
@@ -146,11 +147,12 @@ TICKETS_CHANNEL=C9876543210        # Internal help staff channel
 SLACK_BOT_TOKEN=xoxb-...           # Bot OAuth token
 SLACK_APP_TOKEN=xapp-...           # App-level token (socket mode)
 SLACK_WORKSPACE_DOMAIN=yourworkspace # For building thread URLs
+DATABASE_URL=postgres://...        # PostgreSQL connection string
 ```
 
 ## Periodic Tasks
 - **Grace timer checks**: Every 1 minute
-- **Data persistence**: Every 5 minutes (backup)
+- **Data persistence**: Every 5 minutes (backup to PostgreSQL)
 - **Member cache refresh**: Every 1 hour
 - **Daily leaderboard**: Every 24 hours
 
@@ -169,7 +171,7 @@ The bot needs these Slack permissions (see manifest.yaml):
 - Event subscriptions for messages and reactions
 
 ## Data Persistence
-- Primary storage: `ticket-data.json` in project root
+- Primary storage: PostgreSQL database
 - Saves on:
   - Every ticket state change
   - Every 5 minutes (automatic backup)
@@ -237,6 +239,5 @@ Edit `createQueueMessageText()` in `src/utils.ts`
 ## Known Limitations
 - Grace timer resolution is 1 minute (check interval)
 - Queue message limited to ~4000 characters (Slack limit)
-- Relies on in-memory state + periodic file saves
-- No database - uses JSON file storage
+- Relies on in-memory state + periodic PostgreSQL saves
 - Single instance only (no multi-bot coordination)

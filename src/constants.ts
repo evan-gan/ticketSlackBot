@@ -137,4 +137,5 @@ export const ENDPOINT_RATE_LIMITS: Record<string, { requestsPerMinute: number; r
   
   // Tier 4: 100 per minute
   'conversations.members': { requestsPerMinute: 100 },
+  'auth.test': { requestsPerMinute: 100 },
 };

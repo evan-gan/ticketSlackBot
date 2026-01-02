@@ -23,6 +23,7 @@ This is a Slack bot that manages a sophisticated ticketing system with automatic
   - `resolveTicket()`: Marks tickets as resolved (adds reaction, posts closure message if staff resolves or was last responder)
   - `unresolveTicket()`: Reverses resolution (removes reaction, deletes closure message)
   - `updateQueueMessage()`: Manages the pinned queue message in tickets channel (updates in place by default, can force repost)
+  - `cleanupOldBotMessages()`: Searches for and deletes old bot messages in the tickets channel
   - `checkGraceTimers()`: Background job that checks expired timers
 
 - **`src/startupRecovery.ts`**: Startup recovery and missed message handling
@@ -141,6 +142,12 @@ This is a Slack bot that manages a sophisticated ticketing system with automatic
   - Uses rate-limited API calls to avoid overwhelming Slack
 - **Queue Initialization**: Updates queue message with current ticket state
 
+### 9. Cleanup System
+- Searches `TICKETS_CHANNEL` for messages sent by the bot
+- Deletes any bot message that is NOT the current `queueMessageTs`
+- Runs on startup
+- Ensures the channel stays clean of old leaderboard posts or duplicate queue messages
+
 ## Environment Variables
 ```
 HELP_CHANNEL=C0123456789           # Where users post questions
@@ -202,6 +209,7 @@ All timing values are in `src/constants.ts`:
 - `AUTO_SAVE_INTERVAL_MS` - Backup save frequency
 - `MEMBER_REFRESH_INTERVAL_MS` - Help staff list refresh rate
 - `LEADERBOARD_POST_INTERVAL_MS` - Daily leaderboard frequency
+- `CLEANUP_INTERVAL_MS` - Old message cleanup frequency
 
 ### Customizing Messages
 Edit message templates in `src/constants.ts`:

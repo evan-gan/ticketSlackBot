@@ -265,6 +265,63 @@ export async function unresolveTicket(
 }
 
 /**
+ * Searches the tickets channel for old messages from the bot and deletes them,
+ * except for the current pinned queue message.
+ */
+export async function cleanupOldBotMessages(client: any, logger: any): Promise<void> {
+  try {
+    const ticketsChannel = process.env.TICKETS_CHANNEL;
+    if (!ticketsChannel) {
+      logger.error('❌ TICKETS_CHANNEL environment variable is not set');
+      return;
+    }
+
+    const currentQueueTs = getQueueMessageTs();
+    
+    // Get bot user ID
+    const authResult: any = await rateLimitedCall('auth.test', () => client.auth.test());
+    if (!authResult.ok) {
+      logger.error('❌ Failed to get bot user ID for cleanup');
+      return;
+    }
+    const botId = authResult.user_id;
+
+    logger.info(`🧹 Starting cleanup of old bot messages in ${ticketsChannel}`);
+
+    // Fetch messages from the tickets channel
+    const result: any = await rateLimitedCall('conversations.history', () =>
+      client.conversations.history({
+        channel: ticketsChannel,
+        limit: 100,
+      })
+    );
+
+    if (result.ok && result.messages) {
+      let deletedCount = 0;
+      for (const message of result.messages) {
+        // If message is from the bot and is not the current queue message
+        if (message.user === botId && message.ts !== currentQueueTs) {
+          await rateLimitedCall('chat.delete', () =>
+            client.chat.delete({
+              channel: ticketsChannel,
+              ts: message.ts,
+            })
+          );
+          deletedCount++;
+        }
+      }
+      if (deletedCount > 0) {
+        logger.info(`✅ Deleted ${deletedCount} old bot messages`);
+      } else {
+        logger.info('✨ No old bot messages to clean up');
+      }
+    }
+  } catch (error) {
+    logger.error('❌ Error cleaning up old bot messages:', error);
+  }
+}
+
+/**
  * Updates or creates the pinned queue message in the tickets channel.
  * Shows all tickets currently needing help.
  */

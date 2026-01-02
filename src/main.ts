@@ -69,6 +69,10 @@ async function startBot() {
     const { initializeQueueOnStartup, performStartupRecovery, scanForMissedMessages } = await import('./startupRecovery');
     await initializeQueueOnStartup(client, console);
     
+    // Clean up old bot messages in tickets channel
+    const { cleanupOldBotMessages } = await import('./tickets');
+    await cleanupOldBotMessages(client, console);
+    
     // Scan for missed messages (must run before regular recovery to catch offline messages)
     await scanForMissedMessages(client, console);
     

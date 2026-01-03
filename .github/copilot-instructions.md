@@ -156,6 +156,8 @@ SLACK_BOT_TOKEN=xoxb-...           # Bot OAuth token
 SLACK_APP_TOKEN=xapp-...           # App-level token (socket mode)
 SLACK_WORKSPACE_DOMAIN=yourworkspace # For building thread URLs
 DATABASE_URL=postgres://...        # PostgreSQL connection string
+WELCOME_MESSAGE_TEXT="..."         # (Optional) Custom welcome message
+TICKET_RESOLVED_MESSAGE="..."      # (Optional) Custom resolution message
 ```
 
 ## Periodic Tasks
@@ -212,7 +214,7 @@ All timing values are in `src/constants.ts`:
 - `CLEANUP_INTERVAL_MS` - Old message cleanup frequency
 
 ### Customizing Messages
-Edit message templates in `src/constants.ts`:
+Edit message templates in `src/constants.ts` or set them in `.env`:
 - `WELCOME_MESSAGE_TEXT` - Initial message to users
 - `TICKET_RESOLVED_MESSAGE` - Closure message
 - `QUEUE_MESSAGE_HEADER` - Queue header text

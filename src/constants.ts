@@ -1,3 +1,5 @@
+import 'dotenv/config';
+
 /**
  * Configuration constants for the ticketing bot.
  * Edit these values to customize bot behavior.
@@ -58,7 +60,7 @@ export const LEADERBOARD_POST_INTERVAL_MS = 24 * 60 * 60 * 1000;
 /**
  * Welcome message text shown to users when they create a ticket.
  */
-export const WELCOME_MESSAGE_TEXT = ':wave-pikachu-2: Thank you for creating a ticket. Someone will help you soon. Make sure to read the documentation and the README before asking questions!';
+export const WELCOME_MESSAGE_TEXT = process.env.WELCOME_MESSAGE_TEXT || ':wave-pikachu-2: Thank you for creating a ticket. Someone will help you soon. Make sure to read the FAQ pinned to this channel!';
 
 /**
  * The button text for the resolve button.
@@ -69,7 +71,7 @@ export const RESOLVE_BUTTON_TEXT = 'Resolve';
  * Message shown when a ticket is resolved.
  * Use {HELP_CHANNEL} placeholder for the help channel mention.
  */
-export const TICKET_RESOLVED_MESSAGE = 'This ticket has been marked as resolved. Feel free to send a new message to this thread to un-resolve it and ask further questions. If you have a new question, please post it in {HELP_CHANNEL} instead of replying here.';
+export const TICKET_RESOLVED_MESSAGE = process.env.TICKET_RESOLVED_MESSAGE || 'This ticket has been marked as resolved. Feel free to send a new message to this thread to un-resolve it and ask further questions. If you have a new question, please post it in {HELP_CHANNEL} instead of replying here.';
 
 /**
  * Message shown in queue when all tickets are handled.

@@ -92,6 +92,8 @@ export interface TicketInfo {
   inQueue: boolean;
   // The timestamp of the bot's "ticket closed" message (if exists)
   closureMessageTs?: string;
+  // Timestamp of the last manual resolution (used to prevent immediate un-resolve)
+  lastResolvedTs?: number;
 }
 
 /**

@@ -6,7 +6,7 @@
 
 import { tickets, getQueueMessageTs, getLastProcessedMessageTs, ticketsByOriginalTs, setQueueMessageTs } from './data';
 import { updateQueueMessage, createTicket } from './tickets';
-import { rateLimitedCall } from './rateLimiter';
+import { rateLimitedCall, CallPriority } from './rateLimiter';
 import { QUEUE_MESSAGE_HEADER } from './constants';
 
 /**
@@ -34,7 +34,8 @@ export async function cleanupOldQueueMessages(
       client.conversations.history({
         channel: ticketsChannel,
         limit: 100, // Check last 100 messages
-      })
+      }),
+      CallPriority.Low
     );
 
     if (!result.ok || !result.messages) {
@@ -53,7 +54,8 @@ export async function cleanupOldQueueMessages(
               client.chat.delete({
                 channel: ticketsChannel,
                 ts: msg.ts,
-              })
+              }),
+              CallPriority.Low
             );
             deletedCount++;
             logger.info(`🗑️  Deleted old queue message: ${msg.ts}`);
@@ -114,7 +116,8 @@ export async function scanForMissedMessages(
         channel: helpChannel,
         oldest: lastProcessedTs,
         limit: 100, // Get up to 100 messages (should be more than enough for typical downtime)
-      })
+      }),
+      CallPriority.Low
     );
 
     if (!result.ok || !result.messages) {
@@ -282,7 +285,7 @@ async function checkThreadStatus(
         }
         throw error;
       }
-    });
+    }, CallPriority.Low);
 
     if (!messageExists) {
       logger.info(
@@ -315,7 +318,7 @@ async function checkThreadStatus(
         logger.warn(`Failed to check replies for ${ticket.originalTs}:`, error);
         return null;
       }
-    });
+    }, CallPriority.Low);
 
     if (hasRecentReplies) {
       // Note: We don't automatically update lastResponderId during recovery

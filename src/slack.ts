@@ -9,7 +9,7 @@ import {
   isTicketChannelMember,
 } from './data';
 import { STARTUP_MESSAGE } from './constants';
-import { rateLimitedCall } from './rateLimiter';
+import { rateLimitedCall, CallPriority } from './rateLimiter';
 import {
   createTicket,
   handleStaffResponse,
@@ -51,7 +51,8 @@ export async function refreshTicketChannelMembers(client: any): Promise<boolean>
     const result: any = await rateLimitedCall('conversations.members', () =>
       client.conversations.members({
         channel: ticketsChannel,
-      })
+      }),
+      CallPriority.Low
     );
 
     if (result.ok && result.members) {
@@ -78,7 +79,8 @@ export async function notifyStartup(client: any, userId: string): Promise<boolea
       client.chat.postMessage({
         channel: userId,
         text: STARTUP_MESSAGE,
-      })
+      }),
+      CallPriority.Low
     );
     console.log(`✅ Sent startup notification to <@${userId}>`);
     return true;
@@ -190,7 +192,8 @@ export function registerSlackHandlers(app: App) {
           latest: ticket.originalTs,
           limit: 1,
           inclusive: true,
-        })
+        }),
+        CallPriority.High
       );
 
       const isOriginalAuthor =
@@ -216,53 +219,6 @@ export function registerSlackHandlers(app: App) {
       logger.error('❌ Error handling resolve button:', error);
     }
   });
-
-  // Handle check mark reaction to resolve tickets (alternative method)
-  app.event('reaction_added', async ({ event, client, logger }) => {
-    const reactionEvent = event as {
-      reaction: string;
-      item: { channel: string; ts: string };
-      user: string;
-    };
-
-    // Only handle check mark reactions in the help channel
-    if (reactionEvent.reaction !== 'white_check_mark' || reactionEvent.item.channel !== helpChannel) {
-      return;
-    }
-
-    const ticket = getTicketByOriginalTs(reactionEvent.item.ts);
-    if (!ticket) return;
-
-    try {
-      // Verify user is the original message author or help staff
-      const messageInfo = await rateLimitedCall('conversations.history', () =>
-        client.conversations.history({
-          channel: reactionEvent.item.channel,
-          latest: reactionEvent.item.ts,
-          limit: 1,
-          inclusive: true,
-        })
-      );
-
-      const isOriginalAuthor =
-        messageInfo.messages &&
-        messageInfo.messages[0] &&
-        messageInfo.messages[0].user === reactionEvent.user;
-
-      if (isOriginalAuthor || isTicketChannelMember(reactionEvent.user)) {
-        const success = await resolveTicket(ticket, reactionEvent.user, client, logger);
-        if (success) {
-          logger.info(
-            `Ticket resolved via reaction by ${reactionEvent.user} (${
-              isOriginalAuthor ? 'original author' : 'help staff'
-            })`
-          );
-        }
-      }
-    } catch (error) {
-      logger.error('❌ Error handling reaction resolution:', error);
-    }
-  });
 }
 
 /**
@@ -276,22 +232,24 @@ export async function postLeaderboardAndReset(client: any) {
       return;
     }
 
-    if (lbForToday.length === 0) {
-      console.log('📊 No resolutions today, skipping leaderboard');
-      return;
+    const staffLB = lbForToday.filter(entry => isTicketChannelMember(entry.slack_id));
+
+    if (staffLB.length === 0) {
+      console.log('📊 No staff resolutions today, skipping leaderboard');
+    } else {
+      const sortedLB = staffLB.sort((a, b) => b.count_of_tickets - a.count_of_tickets);
+      const leaderboardText = sortedLB
+        .map((entry, index) => `${index + 1}. <@${entry.slack_id}> resolved *${entry.count_of_tickets}*`)
+        .join('\n');
+
+      await rateLimitedCall('chat.postMessage', () =>
+        client.chat.postMessage({
+          channel: ticketsChannel,
+          text: `📊 Today's Top Resolvers:\n${leaderboardText}`,
+        }),
+        CallPriority.Low
+      );
     }
-
-    const sortedLB = lbForToday.sort((a, b) => b.count_of_tickets - a.count_of_tickets);
-    const leaderboardText = sortedLB
-      .map((entry, index) => `${index + 1}. <@${entry.slack_id}> resolved *${entry.count_of_tickets}*`)
-      .join('\n');
-
-    await rateLimitedCall('chat.postMessage', () =>
-      client.chat.postMessage({
-        channel: ticketsChannel,
-        text: `📊 Today's Top Resolvers:\n${leaderboardText}`,
-      })
-    );
 
     resetLeaderboard();
     await saveTicketData();

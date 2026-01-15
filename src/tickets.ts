@@ -12,7 +12,7 @@ import {
 } from './data';
 import { GRACE_PERIOD_MS, TICKET_RESOLVED_MESSAGE } from './constants';
 import { createWelcomeBlocks, getThreadUrl, createQueueMessageText } from './utils';
-import { rateLimitedCall } from './rateLimiter';
+import { rateLimitedCall, CallPriority } from './rateLimiter';
 
 /**
  * Creates a new ticket from a help channel message.
@@ -31,7 +31,8 @@ export async function createTicket(
         thread_ts: message.ts,
         blocks: createWelcomeBlocks(),
         text: 'Thank you for creating a ticket. Someone will help you soon.',
-      })
+      }),
+      CallPriority.High
     );
 
     if (welcomeResult.ok && welcomeResult.ts) {
@@ -111,7 +112,12 @@ export async function handleStaffResponse(
 
   // If ticket was resolved, un-resolve it
   if (ticket.resolved) {
-    await unresolveTicket(ticket, client, logger);
+    const resolveTime = ticket.lastResolvedTs || 0;
+    if (Date.now() - resolveTime > 10000) {
+      await unresolveTicket(ticket, client, logger);
+    } else {
+      logger.info(`Ignored un-resolve on staff reply for ticket ${threadTs} (within 10s grace)`);
+    }
   }
 
   // Update the queue if needed
@@ -138,7 +144,12 @@ export async function handleUserResponse(
 
   // If ticket was resolved, un-resolve it
   if (ticket.resolved) {
-    await unresolveTicket(ticket, client, logger);
+    const resolveTime = ticket.lastResolvedTs || 0;
+    if (Date.now() - resolveTime > 10000) {
+      await unresolveTicket(ticket, client, logger);
+    } else {
+      logger.info(`Ignored un-resolve on user reply for ticket ${threadTs} (within 10s grace)`);
+    }
   }
 
   // Grace timer continues (doesn't reset)
@@ -157,9 +168,16 @@ export async function resolveTicket(
   client: any,
   logger: any
 ): Promise<boolean> {
+  // Prevent double resolution if already resolved
+  if (ticket.resolved) {
+    logger.info(`Ticket ${ticket.originalTs} is already resolved, skipping.`);
+    return true;
+  }
+
   try {
     ticket.resolved = true;
     ticket.graceTimerExpiry = null;
+    ticket.lastResolvedTs = Date.now();
 
     // Add white checkmark reaction
     try {
@@ -168,7 +186,8 @@ export async function resolveTicket(
           name: 'white_check_mark',
           timestamp: ticket.originalTs,
           channel: ticket.originalChannel,
-        })
+        }),
+        CallPriority.High
       );
     } catch (error: any) {
       // Reaction might already exist, ignore
@@ -187,7 +206,8 @@ export async function resolveTicket(
           channel: ticket.originalChannel,
           thread_ts: ticket.originalTs,
           text: TICKET_RESOLVED_MESSAGE.replace('{HELP_CHANNEL}', `<#${process.env.HELP_CHANNEL}>`),
-        })
+        }),
+        CallPriority.High
       );
       ticket.closureMessageTs = closureResult.ts;
     }
@@ -293,7 +313,8 @@ export async function cleanupOldBotMessages(client: any, logger: any): Promise<v
       client.conversations.history({
         channel: ticketsChannel,
         limit: 100,
-      })
+      }),
+      CallPriority.Low
     );
 
     if (result.ok && result.messages) {
@@ -305,7 +326,8 @@ export async function cleanupOldBotMessages(client: any, logger: any): Promise<v
             client.chat.delete({
               channel: ticketsChannel,
               ts: message.ts,
-            })
+            }),
+            CallPriority.Low
           );
           deletedCount++;
         }
@@ -353,7 +375,8 @@ export async function updateQueueMessage(
             channel: ticketsChannel,
             ts: currentQueueTs,
             text: queueText,
-          })
+          }),
+          CallPriority.Low
         );
         return true;
       } catch (error) {
@@ -369,7 +392,8 @@ export async function updateQueueMessage(
           client.chat.delete({
             channel: ticketsChannel,
             ts: currentQueueTs,
-          })
+          }),
+          CallPriority.Low
         );
       } catch (error) {
         // Message might already be deleted, that's fine
@@ -382,7 +406,8 @@ export async function updateQueueMessage(
       client.chat.postMessage({
         channel: ticketsChannel,
         text: queueText,
-      })
+      }),
+      CallPriority.Low
     );
     setQueueMessageTs(result.ts);
     
@@ -395,7 +420,8 @@ export async function updateQueueMessage(
         client.pins.add({
           channel: ticketsChannel,
           timestamp: result.ts,
-        })
+        }),
+        CallPriority.Low
       );
     } catch (pinError) {
       logger.warn('Failed to pin queue message, but timestamp was saved:', pinError);

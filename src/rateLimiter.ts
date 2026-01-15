@@ -8,10 +8,17 @@ import {
   ENDPOINT_RATE_LIMITS,
 } from './constants';
 
+export enum CallPriority {
+  High = 0,
+  Normal = 1,
+  Low = 2,
+}
+
 interface QueuedRequest {
   fn: () => Promise<any>;
   resolve: (value: any) => void;
   reject: (error: any) => void;
+  priority: CallPriority;
   timestamp: number;
 }
 
@@ -34,19 +41,22 @@ class EndpointRateLimiter {
    * Executes a function with rate limiting.
    * Queues the request if rate limit would be exceeded.
    * @param fn - The async function to execute
+   * @param priority - The priority of the request
    * @returns Promise that resolves with the function result
    */
-  async execute<T>(fn: () => Promise<T>): Promise<T> {
+  async execute<T>(fn: () => Promise<T>, priority: CallPriority = CallPriority.Normal): Promise<T> {
     return new Promise((resolve, reject) => {
       const request: QueuedRequest = {
         fn,
         resolve,
         reject,
+        priority,
         timestamp: Date.now(),
       };
 
-      // Add to queue
+      // Add to queue and sort by priority (stable sort by timestamp for same priority)
       this.queue.push(request);
+      this.queue.sort((a, b) => (a.priority - b.priority) || (a.timestamp - b.timestamp));
 
       // Start processing if not already running
       if (!this.processing) {
@@ -221,11 +231,12 @@ class RateLimiterManager {
    * Executes a function with rate limiting for a specific endpoint.
    * @param endpoint - The Slack API endpoint (e.g., 'chat.postMessage')
    * @param fn - The async function to execute
+   * @param priority - The priority of the request
    * @returns Promise that resolves with the function result
    */
-  async execute<T>(endpoint: string, fn: () => Promise<T>): Promise<T> {
+  async execute<T>(endpoint: string, fn: () => Promise<T>, priority: CallPriority = CallPriority.Normal): Promise<T> {
     const limiter = this.getLimiter(endpoint);
-    return limiter.execute(fn);
+    return limiter.execute(fn, priority);
   }
 
   /**
@@ -258,9 +269,10 @@ const rateLimiterManager = new RateLimiterManager();
  */
 export async function rateLimitedCall<T>(
   endpoint: string,
-  fn: () => Promise<T>
+  fn: () => Promise<T>,
+  priority: CallPriority = CallPriority.Normal
 ): Promise<T> {
-  return rateLimiterManager.execute(endpoint, fn);
+  return rateLimiterManager.execute(endpoint, fn, priority);
 }
 
 /**

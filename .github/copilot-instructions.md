@@ -9,7 +9,12 @@ This is a Slack bot that manages a sophisticated ticketing system with automatic
 - **`src/main.ts`**: Application entry point
   - Initializes Slack Bolt app with socket mode
   - Sets up periodic tasks (timer checks, data saves, member refresh)
-  - Handles startup and initialization sequence
+  - `handleStartup()`: Handles startup and initialization sequence
+
+- **`src/rateLimiter.ts`**: Slack API Rate Limiter
+  - Manages per-endpoint rate limits
+  - Implements priority queue (High, Normal, Low)
+  - Prioritizes interactive tasks (resolve, welcome) over background tasks
 
 - **`src/slack.ts`**: Slack event handlers
   - Handles message events (ticket creation, thread replies)
@@ -66,6 +71,7 @@ This is a Slack bot that manages a sophisticated ticketing system with automatic
   lastResponderId: string | null;   // Last person to reply
   inQueue: boolean;            // Currently needs help
   closureMessageTs?: string;   // Bot's closure message timestamp
+  lastResolvedTs?: number;     // Timestamp of last manual resolution (transient, for 10s un-resolve buffer)
 }
 ```
 
@@ -103,7 +109,6 @@ This is a Slack bot that manages a sophisticated ticketing system with automatic
 ### 5. Resolution System
 - Can be triggered by:
   - "Resolve" button in welcome message
-  - White checkmark reaction on original message
   - Automatic (grace timer expiry with staff as last responder)
 - Resolution actions:
   - Set `resolved` = true
@@ -114,6 +119,7 @@ This is a Slack bot that manages a sophisticated ticketing system with automatic
 
 ### 6. Un-Resolution System
 - Triggered when anyone replies to resolved ticket
+- **Grace Buffer**: If reply is within 10 seconds of manual resolution, un-resolution is skipped (prevents race conditions)
 - Actions:
   - Set `resolved` = false
   - Remove white checkmark reaction

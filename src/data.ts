@@ -57,6 +57,13 @@ export async function initDB() {
         count_of_tickets INTEGER NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS leaderboard_history (
+        date TEXT NOT NULL,
+        slack_id TEXT NOT NULL,
+        count_of_tickets INTEGER NOT NULL,
+        PRIMARY KEY (date, slack_id)
+      );
+
       CREATE TABLE IF NOT EXISTS metadata (
         key TEXT PRIMARY KEY,
         value TEXT
@@ -113,8 +120,8 @@ export const ticketsByOriginalTs: Record<string, string> = {};
 // Tracks ticket resolutions for the current day's leaderboard
 export let lbForToday: LBEntry[] = [];
 
-// Timestamp of the pinned queue message in the tickets channel
-export let queueMessageTs: string | null = null;
+// Timestamps of the pinned queue message parts in the tickets channel (supports splitting across 2 messages)
+export let queueMessageTs: string[] = [];
 
 // Timestamp of the last processed message in the help channel (for recovery)
 let lastProcessedMessageTs: string | null = null;
@@ -157,8 +164,7 @@ export async function saveTicketData() {
     }
 
     // Save metadata
-    await client.query("INSERT INTO metadata (key, value) VALUES ('queueMessageTs', $1) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", [queueMessageTs]);
-    await client.query("INSERT INTO metadata (key, value) VALUES ('lastProcessedMessageTs', $1) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", [lastProcessedMessageTs]);
+      await client.query("INSERT INTO metadata (key, value) VALUES ('queueMessageTs', $1) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", [JSON.stringify(queueMessageTs)]);
 
     await client.query('COMMIT');
     console.log('✅ Ticket data saved to PostgreSQL');
@@ -214,7 +220,13 @@ export async function loadTicketData(): Promise<boolean> {
       // Load metadata
       const metaRes = await client.query('SELECT * FROM metadata');
       for (const row of metaRes.rows) {
-        if (row.key === 'queueMessageTs') queueMessageTs = row.value;
+        if (row.key === 'queueMessageTs') {
+          try {
+            queueMessageTs = JSON.parse(row.value) || [];
+          } catch {
+            queueMessageTs = [];
+          }
+        }
         if (row.key === 'lastProcessedMessageTs') lastProcessedMessageTs = row.value;
       }
 
@@ -267,17 +279,38 @@ export function resetLeaderboard() {
 }
 
 /**
- * Updates the queue message timestamp.
+ * Updates the queue message timestamps (supports up to 2 parts).
  */
-export function setQueueMessageTs(ts: string | null) {
-  queueMessageTs = ts;
+export function setQueueMessageTs(ts: string[] | null) {
+  queueMessageTs = ts || [];
 }
 
 /**
- * Gets the current queue message timestamp.
+ * Gets the current queue message timestamps.
  */
-export function getQueueMessageTs(): string | null {
+export function getQueueMessageTs(): string[] {
   return queueMessageTs;
+}
+
+/**
+ * Saves leaderboard to history before resetting for a new day.
+ */
+export async function saveLeaderboardHistory() {
+  const client = await getPool().connect();
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    for (const entry of lbForToday) {
+      await client.query(
+        'INSERT INTO leaderboard_history (date, slack_id, count_of_tickets) VALUES ($1, $2, $3) ON CONFLICT (date, slack_id) DO UPDATE SET count_of_tickets = EXCLUDED.count_of_tickets',
+        [today, entry.slack_id, entry.count_of_tickets]
+      );
+    }
+    console.log('✅ Leaderboard history saved');
+  } catch (error) {
+    console.error('❌ Error saving leaderboard history:', error);
+  } finally {
+    client.release();
+  }
 }
 
 /**

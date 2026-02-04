@@ -11,7 +11,7 @@ import {
   isTicketChannelMember,
 } from './data';
 import { GRACE_PERIOD_MS, TICKET_RESOLVED_MESSAGE } from './constants';
-import { createWelcomeBlocks, getThreadUrl, createQueueMessageText } from './utils';
+import { createWelcomeBlocks, getThreadUrl, createQueueMessageText, splitQueueMessage } from './utils';
 import { rateLimitedCall, CallPriority } from './rateLimiter';
 
 /**
@@ -347,6 +347,14 @@ export async function cleanupOldBotMessages(client: any, logger: any): Promise<v
  * Updates or creates the pinned queue message in the tickets channel.
  * Shows all tickets currently needing help.
  */
+/**
+ * Updates the queue message in the tickets channel.
+ * Updates the message in place by default, or reposts if needed.
+ * Handles large queues by splitting across multiple messages if needed (max 2 parts).
+ * @param client - Slack client
+ * @param logger - Logger instance
+ * @param forceRepost - If true, deletes and reposts message instead of updating in place
+ */
 export async function updateQueueMessage(
   client: any,
   logger: any,
@@ -364,68 +372,84 @@ export async function updateQueueMessage(
         responders: t.responders,
       }));
 
-    const queueText = createQueueMessageText(ticketsInQueue);
+    // Split queue message into parts if needed (Slack 4000 char limit)
+    const queueParts = splitQueueMessage(ticketsInQueue);
     const currentQueueTs = getQueueMessageTs();
+    const newQueueTs: string[] = [];
 
-    if (currentQueueTs && !forceRepost) {
-      // Update existing message
-      try {
-        await rateLimitedCall('chat.update', () =>
-          client.chat.update({
-            channel: ticketsChannel,
-            ts: currentQueueTs,
-            text: queueText,
-          }),
-          CallPriority.Low
-        );
+    // Try to update existing messages if same number of parts
+    if (!forceRepost && currentQueueTs.length === queueParts.length && currentQueueTs.length > 0) {
+      let updateSuccess = true;
+      for (let i = 0; i < queueParts.length; i++) {
+        try {
+          await rateLimitedCall('chat.update', () =>
+            client.chat.update({
+              channel: ticketsChannel,
+              ts: currentQueueTs[i],
+              text: queueParts[i],
+            }),
+            CallPriority.Low
+          );
+          newQueueTs.push(currentQueueTs[i]);
+        } catch (error) {
+          logger.warn(`Failed to update queue message part ${i + 1}, will repost:`, error);
+          updateSuccess = false;
+          break;
+        }
+      }
+      if (updateSuccess) {
         return true;
-      } catch (error) {
-        logger.warn('Failed to update queue message, will try reposting:', error);
-        // Fall through to reposting logic
       }
     }
 
-    // Delete old queue message if it exists
-    if (currentQueueTs) {
-      try {
-        await rateLimitedCall('chat.delete', () =>
-          client.chat.delete({
-            channel: ticketsChannel,
-            ts: currentQueueTs,
-          }),
-          CallPriority.Low
-        );
-      } catch (error) {
-        // Message might already be deleted, that's fine
-        logger.info('Old queue message not found or already deleted');
+    // Delete old queue messages if they exist
+    if (currentQueueTs.length > 0) {
+      for (const ts of currentQueueTs) {
+        try {
+          await rateLimitedCall('chat.delete', () =>
+            client.chat.delete({
+              channel: ticketsChannel,
+              ts: ts,
+            }),
+            CallPriority.Low
+          );
+        } catch (error) {
+          // Message might already be deleted, that's fine
+          logger.info(`Old queue message ${ts} not found or already deleted`);
+        }
       }
     }
 
-    // Post new queue message at the bottom
-    const result: any = await rateLimitedCall('chat.postMessage', () =>
-      client.chat.postMessage({
-        channel: ticketsChannel,
-        text: queueText,
-      }),
-      CallPriority.Low
-    );
-    setQueueMessageTs(result.ts);
-    
-    // Save immediately after setting new timestamp
-    await saveTicketData();
-    
-    // Pin the new message (try-catch to prevent losing timestamp if pinning fails)
-    try {
-      await rateLimitedCall('pins.add', () =>
-        client.pins.add({
+    // Post new queue messages
+    for (let i = 0; i < queueParts.length; i++) {
+      const result: any = await rateLimitedCall('chat.postMessage', () =>
+        client.chat.postMessage({
           channel: ticketsChannel,
-          timestamp: result.ts,
+          text: queueParts[i],
         }),
         CallPriority.Low
       );
-    } catch (pinError) {
-      logger.warn('Failed to pin queue message, but timestamp was saved:', pinError);
+      newQueueTs.push(result.ts);
+      
+      // Pin the message (try-catch to prevent losing timestamp if pinning fails)
+      try {
+        await rateLimitedCall('pins.add', () =>
+          client.pins.add({
+            channel: ticketsChannel,
+            timestamp: result.ts,
+          }),
+          CallPriority.Low
+        );
+      } catch (pinError) {
+        logger.warn(`Failed to pin queue message part ${i + 1}, but timestamp was saved:`, pinError);
+      }
     }
+    
+    setQueueMessageTs(newQueueTs);
+    
+    // Save immediately after setting new timestamps
+    await saveTicketData();
+    
     return true;
   } catch (error) {
     logger.error('❌ Error updating queue message:', error);

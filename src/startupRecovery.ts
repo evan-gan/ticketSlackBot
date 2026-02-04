@@ -26,8 +26,9 @@ export async function cleanupOldQueueMessages(
 
     logger.info('🧹 Cleaning up old queue messages...');
 
-    // Get the stored queue message timestamp
-    const storedQueueTs = getQueueMessageTs();
+    // Get the stored queue message timestamps
+    const storedQueueTsList = getQueueMessageTs();
+    const storedQueueTsSet = new Set(storedQueueTsList || []);
 
     // Fetch recent messages from tickets channel to find old queue messages
     const result: any = await rateLimitedCall('conversations.history', () =>
@@ -47,8 +48,8 @@ export async function cleanupOldQueueMessages(
     for (const msg of result.messages) {
       // Check if message is a queue message (contains the header and is from the bot)
       if (msg.bot_id && msg.text && msg.text.includes(QUEUE_MESSAGE_HEADER)) {
-        // If it's not the currently stored queue message, delete it
-        if (msg.ts !== storedQueueTs) {
+        // If it's not one of the currently stored queue messages, delete it
+        if (!storedQueueTsSet.has(msg.ts)) {
           try {
             await rateLimitedCall('chat.delete', () =>
               client.chat.delete({
@@ -72,12 +73,14 @@ export async function cleanupOldQueueMessages(
       logger.info('✅ No old queue messages to clean up');
     }
 
-    // If stored queue message was deleted or doesn't exist, clear the timestamp
-    if (storedQueueTs) {
-      const queueMessageExists = result.messages.some((msg: any) => msg.ts === storedQueueTs);
-      if (!queueMessageExists) {
-        logger.info('ℹ️  Stored queue message no longer exists, will create new one');
-        setQueueMessageTs(null);
+    // If stored queue messages were deleted or don't exist, clear the timestamps
+    if (storedQueueTsList && storedQueueTsList.length > 0) {
+      const validTsList = storedQueueTsList.filter((ts) =>
+        result.messages.some((msg: any) => msg.ts === ts)
+      );
+      if (validTsList.length !== storedQueueTsList.length) {
+        logger.info('ℹ️  Some stored queue messages no longer exist, will create new ones');
+        setQueueMessageTs(validTsList.length > 0 ? validTsList : null);
       }
     }
   } catch (error) {

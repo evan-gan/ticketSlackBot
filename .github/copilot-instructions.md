@@ -127,13 +127,20 @@ This is a Slack bot that manages a sophisticated ticketing system with automatic
   - Timer system resumes based on who replied
 
 ### 7. Queue Management
-- Pinned message in TICKETS_CHANNEL
+- Pinned message(s) in TICKETS_CHANNEL supporting multi-part messages for large queues
+- **Multi-part Queue Handling**:
+  - When queue exceeds ~3800 characters, automatically splits across multiple messages (up to 2 parts)
+  - Both parts are pinned to the channel
+  - Header appears on each part, with continuation part labeled "(continued)"
+  - All old queue messages are cleaned up on startup
 - Updates whenever queue changes
 - Shows format:
   - "Not claimed - View Thread" (no responders)
   - "Claimed by: @user1, @user2 - View Thread" (has responders)
-- Created/updated via `updateQueueMessage()`
+- Created/updated via `updateQueueMessage()` in `src/tickets.ts`
+- Uses `splitQueueMessage()` in `src/utils.ts` to handle message splitting
 - Updates in place by default, can force repost to keep at bottom when users message in channel
+- Queue message timestamps stored in array (`queueMessageTs: string[]`) in database
 
 ### 8. Startup Recovery
 - **Missed Message Scanning**: On startup, scans help channel for messages posted while bot was offline
@@ -150,9 +157,22 @@ This is a Slack bot that manages a sophisticated ticketing system with automatic
 
 ### 9. Cleanup System
 - Searches `TICKETS_CHANNEL` for messages sent by the bot
-- Deletes any bot message that is NOT the current `queueMessageTs`
+- Deletes any bot message that is NOT in the current `queueMessageTs` array
 - Runs on startup
 - Ensures the channel stays clean of old leaderboard posts or duplicate queue messages
+- Handles both single and multi-part queue messages correctly
+
+## Leaderboard & History Tracking
+
+### Daily Leaderboard
+- Posted every 24 hours to `TICKETS_CHANNEL`
+- Shows top resolvers for the day
+- Resets after posting
+- **Leaderboard History**: 
+  - All past leaderboard data is now persisted to `leaderboard_history` table
+  - Each day's leaderboard is saved with the date before resetting
+  - Historical data can be queried for analytics and trends
+  - Leaderboard persists across bot restarts
 
 ## Environment Variables
 ```
@@ -191,8 +211,11 @@ The bot needs these Slack permissions (see manifest.yaml):
 - Saves on:
   - Every ticket state change
   - Every 5 minutes (automatic backup)
-  - Queue updates
+  - Queue updates (both single and multi-part messages)
+  - Daily leaderboard (saved to history table before reset)
 - Loads on startup to restore state
+- **Queue Messages**: Stored as JSON array to support 1-2 part messages
+- **Leaderboard History**: Persisted to separate table with date keys for historical tracking
 
 ## Testing Considerations
 - Test with actual Slack workspace
@@ -255,6 +278,6 @@ Edit `createQueueMessageText()` in `src/utils.ts`
 
 ## Known Limitations
 - Grace timer resolution is 1 minute (check interval)
-- Queue message limited to ~4000 characters (Slack limit)
+- Queue message limited to ~3800 characters per part (splits to 2 messages max for Slack 4000 char limit)
 - Relies on in-memory state + periodic PostgreSQL saves
 - Single instance only (no multi-bot coordination)

@@ -7,6 +7,7 @@ import {
   setLastProcessedMessageTs,
   setTicketChannelMembers,
   isTicketChannelMember,
+  saveLeaderboardHistory,
 } from './data';
 import { STARTUP_MESSAGE } from './constants';
 import { rateLimitedCall, CallPriority } from './rateLimiter';
@@ -251,6 +252,8 @@ export async function postLeaderboardAndReset(client: any) {
       );
     }
 
+    // Save leaderboard to history before resetting
+    await saveLeaderboardHistory();
     resetLeaderboard();
     await saveTicketData();
   } catch (error) {

@@ -11,8 +11,8 @@ import 'dotenv/config';
 
 /**
  * Grace period duration in milliseconds.
- * After a help staff member replies, the ticket will auto-resolve after this period
- * if the staff member is the last responder.
+ * After a help staff member replies, the ticket will be re-added to the queue after this period
+ * unless !open command is used to force it open.
  * Default: 20 minutes (1,200,000 ms)
  */
 export const GRACE_PERIOD_MS = 20 * 60 * 1000;

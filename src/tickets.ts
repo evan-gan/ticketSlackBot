@@ -477,17 +477,10 @@ export async function checkGraceTimers(
       !ticket.inQueue
     ) {
       // Grace period expired and ticket not already in queue
-      // Only re-add if staff is NOT the last responder
-      const staffIsLastResponder = ticket.lastResponderId && ticket.responders.includes(ticket.lastResponderId);
-      
-      if (!staffIsLastResponder) {
-        ticket.inQueue = true;
-        queueChanged = true;
-        logger.info(`Ticket ${ticket.originalTs} grace period expired, re-adding to queue`);
-      } else {
-        // Staff is last responder, auto-resolve
-        await resolveTicket(ticket, ticket.lastResponderId!, client, logger);
-      }
+      // Re-add to queue
+      ticket.inQueue = true;
+      queueChanged = true;
+      logger.info(`Ticket ${ticket.originalTs} grace period expired, re-adding to queue`);
     }
   }
 

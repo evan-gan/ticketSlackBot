@@ -18,10 +18,15 @@ export function formatTs(ts: string): string {
 /**
  * Generates a Slack thread URL.
  * @param channelId - The channel ID
- * @param messageTs - The message timestamp
+ * @param messageTs - The message timestamp (thread root)
+ * @param replyTs - The reply timestamp in the thread (optional, links to specific reply and opens thread)
  */
-export function getThreadUrl(channelId: string, messageTs: string): string {
-  return `https://${process.env.SLACK_WORKSPACE_DOMAIN || 'yourworkspace.slack.com'}.slack.com/archives/${channelId}/p${formatTs(messageTs)}`;
+export function getThreadUrl(channelId: string, messageTs: string, replyTs?: string): string {
+  const baseUrl = `https://${process.env.SLACK_WORKSPACE_DOMAIN || 'yourworkspace.slack.com'}.slack.com/archives/${channelId}/p${formatTs(messageTs)}`;
+  if (replyTs) {
+    return `${baseUrl}?thread_ts=${messageTs}&cid=${channelId}&message_ts=${replyTs}`;
+  }
+  return baseUrl;
 }
 
 /**

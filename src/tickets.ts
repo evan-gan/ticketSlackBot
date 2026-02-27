@@ -377,7 +377,7 @@ export async function updateQueueMessage(
     const ticketsInQueue = Object.values(tickets)
       .filter(t => t.inQueue && !t.resolved)
       .map(t => ({
-        threadUrl: getThreadUrl(t.originalChannel, t.originalTs),
+        threadUrl: getThreadUrl(t.originalChannel, t.originalTs, t.ticketMessageTs),
         responders: t.responders,
       }));
 

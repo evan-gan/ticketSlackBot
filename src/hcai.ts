@@ -1,6 +1,6 @@
 import 'dotenv/config';
 
-const AI_ENDPOINT = 'https://ai.hackclub.com/proxy/v1/responses';
+const AI_ENDPOINT = 'https://api.groq.com/openai/v1';
 const AI_API_KEY = process.env.AI_API_KEY || '';
 const FAQ_BASE_URL = process.env.FAQ_BASE_URL || 'https://horizons.hackclub.com/faq';
 const FAQ_MARKDOWN_URL = process.env.FAQ_MARKDOWN_URL || 'https://horizons.hackclub.com/content/faq.md';
@@ -74,7 +74,7 @@ export async function checkFAQ(userQuestion: string): Promise<string | null> {
 
   const systemPrompt = `You are a helpful assistant that matches user questions to FAQ entries. You will be given a list of FAQ entries and a user question. Return ONLY the slugs (the text in square brackets) of FAQ entries that answer the user's question, separated by commas. If no FAQ entries are relevant, return "NONE". Do not explain anything, just return the slugs or "NONE".`;
   console.log("Sending API request")
-  const res = await fetch(AI_ENDPOINT, {
+  const res = await fetch(`${AI_ENDPOINT}/chat/completions`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -82,9 +82,11 @@ export async function checkFAQ(userQuestion: string): Promise<string | null> {
     },
     body: JSON.stringify({
       model: 'openai/gpt-oss-20b',
-      instructions: systemPrompt,
-      input: `FAQ entries:\n${faqList}\n\nUser question: ${userQuestion}`,
-      max_output_tokens: 9000,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: `FAQ entries:\n${faqList}\n\nUser question: ${userQuestion}` }
+      ],
+      max_tokens: 9000,
     }),
   });
   if (!res.ok) {
@@ -94,8 +96,7 @@ export async function checkFAQ(userQuestion: string): Promise<string | null> {
 
   const data: any = await res.json();
   // console.log('AI response:', JSON.stringify(data, null, 2));
-  const outputItem = data.output?.find((o: any) => o.type === 'message');
-  const answer: string = outputItem?.content?.find((c: any) => c.type === 'output_text')?.text?.trim() ?? '';
+  const answer: string = data.choices?.[0]?.message?.content?.trim() ?? '';
 
   if (!answer || answer === 'NONE') return null;
 

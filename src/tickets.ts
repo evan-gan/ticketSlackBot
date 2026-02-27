@@ -322,14 +322,23 @@ export async function cleanupOldBotMessages(client: any, logger: any): Promise<v
       for (const message of result.messages) {
         // If message is from the bot and is not the current queue message
         if (message.user === botId && message.ts !== currentQueueTs) {
-          await rateLimitedCall('chat.delete', () =>
-            client.chat.delete({
-              channel: ticketsChannel,
-              ts: message.ts,
-            }),
-            CallPriority.Low
-          );
-          deletedCount++;
+          try {
+            await rateLimitedCall('chat.delete', () =>
+              client.chat.delete({
+                channel: ticketsChannel,
+                ts: message.ts,
+              }),
+              CallPriority.Low
+            );
+            deletedCount++;
+          } catch (deleteError: any) {
+            // Log individual deletion failures but don't stop cleanup
+            if (deleteError?.data?.error === 'cant_delete_message') {
+              logger.info(`⚠️  Could not delete message ${message.ts} (permissions or age restriction)`);
+            } else {
+              logger.warn(`Failed to delete message ${message.ts}:`, deleteError);
+            }
+          }
         }
       }
       if (deletedCount > 0) {

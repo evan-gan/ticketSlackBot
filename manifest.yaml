@@ -31,6 +31,7 @@ settings:
   event_subscriptions:
     bot_events:
       - message.channels
+      - message.groups
       - reaction_added
       - app_home_opened
   interactivity:

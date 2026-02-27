@@ -2,7 +2,8 @@ import 'dotenv/config';
 
 const AI_ENDPOINT = 'https://ai.hackclub.com/proxy/v1/responses';
 const AI_API_KEY = process.env.AI_API_KEY || '';
-const FAQ_URL = 'https://horizons.hackclub.com/content/faq.md';
+const FAQ_BASE_URL = process.env.FAQ_BASE_URL || 'https://horizons.hackclub.com/faq';
+const FAQ_MARKDOWN_URL = process.env.FAQ_MARKDOWN_URL || 'https://horizons.hackclub.com/content/faq.md';
 
 interface FAQEntry {
   header: string;
@@ -29,9 +30,9 @@ function slugify(header: string): string {
  * Caches the result to avoid repeated fetches.
  */
 async function getFAQEntries(): Promise<FAQEntry[]> {
-  if (cachedFAQEntries) return cachedFAQEntries;
+   if (cachedFAQEntries) return cachedFAQEntries;
 
-  const res = await fetch(FAQ_URL);
+   const res = await fetch(FAQ_MARKDOWN_URL);
   if (!res.ok) {
     console.error(`Failed to fetch FAQ: ${res.status}`);
     return [];
@@ -104,7 +105,7 @@ export async function checkFAQ(userQuestion: string): Promise<string | null> {
   if (matchedEntries.length === 0) return null;
 
   const links = matchedEntries
-    .map((e) => `https://horizons.hackclub.com/faq#${e.slug}`)
+    .map((e) => `${FAQ_BASE_URL}#${e.slug}`)
     .join('\n');
 
   return `The following FAQ's should answer your question:\n${links}`;

@@ -129,7 +129,7 @@ export function registerSlackHandlers(app: App) {
                 thread_ts: message.ts,
                 text: faqResult + '\n\nPlease reply in this thread if this doesn\'t answer your question!',
               }),
-              CallPriority.Low
+              CallPriority.Normal
             );
 
             await resolveTicket(ticket, 'system', client, logger); // Auto-resolve with FAQ answer

@@ -200,7 +200,7 @@ export async function resolveTicket(
     const isStaffResolver = isTicketChannelMember(resolverId);
     const lastResponderWasStaff = ticket.lastResponderId && ticket.responders.includes(ticket.lastResponderId);
 
-    if (isStaffResolver || lastResponderWasStaff) {
+    if (isStaffResolver || lastResponderWasStaff || resolverId === 'system') {
       const closureResult: any = await rateLimitedCall('chat.postMessage', () =>
         client.chat.postMessage({
           channel: ticket.originalChannel,

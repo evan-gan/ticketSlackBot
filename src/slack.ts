@@ -18,6 +18,7 @@ import {
   resolveTicket,
   updateQueueMessage,
 } from './tickets';
+import { checkFAQ } from './hcai';
 
 // Bot's own user ID to filter out bot messages
 let botUserId: string | null = null;
@@ -109,10 +110,35 @@ export function registerSlackHandlers(app: App) {
     if ((event as any).subtype) return; // Skip edited messages, etc.
 
     const message = event as { text: string; ts: string; channel: string; user: string };
-    await createTicket(message, client, logger);
+    const ticket = await createTicket(message, client, logger);
     
     // Update last processed message timestamp
     setLastProcessedMessageTs(message.ts);
+
+    // Check FAQ in background (fire and forget)
+    if (ticket && message.text) {
+      (async () => {
+        try {
+          const faqResult = await checkFAQ(message.text);
+          console.log("FAQ RESULT:", faqResult);
+          if (faqResult) {
+            // Post FAQ as reply in the same thread
+            await rateLimitedCall('chat.postMessage', () =>
+              client.chat.postMessage({
+                channel: message.channel,
+                thread_ts: message.ts,
+                text: faqResult + '\n\nPlease reply in this thread if this doesn\'t answer your question!',
+              }),
+              CallPriority.Low
+            );
+
+            await resolveTicket(ticket, 'system', client, logger); // Auto-resolve with FAQ answer
+          }
+        } catch (error) {
+          logger.warn('Failed to check FAQ:', error);
+        }
+      })();
+    }
   });
 
   // Listen for new messages in the tickets channel to repost queue message at bottom

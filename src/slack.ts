@@ -107,7 +107,8 @@ export function registerSlackHandlers(app: App) {
   app.event('message', async ({ event, client, logger }) => {
     // Only process new messages in the help channel (not thread replies)
     if (event.channel !== helpChannel || (event as any).thread_ts) return;
-    if ((event as any).subtype) return; // Skip edited messages, etc.
+    const subtype = (event as any).subtype;
+    if (subtype && subtype !== 'file_share') return;// Skip edited messages, etc.
 
     const message = event as { text: string; ts: string; channel: string; user: string };
     const ticket = await createTicket(message, client, logger);
@@ -175,7 +176,8 @@ export function registerSlackHandlers(app: App) {
       (event as any).thread_ts === event.ts
     )
       return;
-    if ((event as any).subtype) return; // Skip edited messages, etc.
+    const subtype = (event as any).subtype;
+    if (subtype && subtype !== 'file_share') return; // Skip edited messages, etc.
 
     const threadReply = event as { thread_ts: string; user: string; text?: string };
 

@@ -86,7 +86,10 @@ export async function checkFAQ(userQuestion: string): Promise<string | null> {
         { role: 'system', content: systemPrompt },
         { role: 'user', content: `FAQ entries:\n${faqList}\n\nUser question: ${userQuestion}` }
       ],
-      max_tokens: 9000,
+      // Response is only comma-separated slugs, so this is generous. Kept well
+      // under the Groq on-demand TPM limit (8000) — a larger value gets the
+      // whole request rejected with HTTP 413 before the model ever runs.
+      max_tokens: 512,
     }),
   });
   if (!res.ok) {

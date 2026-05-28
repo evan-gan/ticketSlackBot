@@ -4,7 +4,7 @@
   "description": "",
   "main": "dist/src/main.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "pnpm tsx ./tests/run_all.ts",
     "start": "pnpm install && pnpm tsx ./src/main.ts",
     "build": "tsc",
     "dev": "pnpm tsx watch ./src/main.ts",

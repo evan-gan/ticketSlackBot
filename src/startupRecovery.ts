@@ -270,17 +270,26 @@ async function checkThreadStatus(
   logger: any
 ): Promise<void> {
   try {
-    // Check if original message still exists
+    // Check if the original message still exists (i.e. the user didn't delete it).
+    // We bound the query to exactly originalTs on both ends with inclusive=true so
+    // Slack can only return that one message. Using `latest` alone would return the
+    // nearest older message when the original was deleted, falsely reporting it as
+    // still present — so we also confirm the returned ts matches exactly.
     const messageExists = await rateLimitedCall('conversations.history', async () => {
       try {
         const result = await client.conversations.history({
           channel: ticket.originalChannel,
           latest: ticket.originalTs,
+          oldest: ticket.originalTs,
           inclusive: true,
           limit: 1,
         });
 
-        return result.ok && result.messages && result.messages.length > 0;
+        return (
+          result.ok &&
+          Array.isArray(result.messages) &&
+          result.messages.some((msg: any) => msg.ts === ticket.originalTs)
+        );
       } catch (error: any) {
         // If we get a channel_not_found error, the channel was deleted
         if (error.data?.error === 'channel_not_found') {
@@ -292,10 +301,11 @@ async function checkThreadStatus(
 
     if (!messageExists) {
       logger.info(
-        `⚠️  Thread ${ticket.originalTs} no longer exists, marking as resolved`
+        `⚠️  Original message ${ticket.originalTs} was deleted, closing ticket and removing from queue`
       );
       ticket.resolved = true;
       ticket.inQueue = false;
+      ticket.graceTimerExpiry = null;
       return;
     }
 

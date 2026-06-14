@@ -120,8 +120,19 @@ export const ticketsByOriginalTs: Record<string, string> = {};
 // Tracks ticket resolutions for the current day's leaderboard
 export let lbForToday: LBEntry[] = [];
 
-// Timestamps of the pinned queue message parts in the tickets channel (supports splitting across 2 messages)
-export let queueMessageTs: string[] = [];
+// Canvas ID of the channel canvas used for the ticket queue in the tickets channel
+export let canvasId: string | null = null;
+
+// Cache of user IDs to display names to avoid repeated users.info calls
+const userNameCache = new Map<string, string>();
+
+export function getCachedUserName(userId: string): string | undefined {
+  return userNameCache.get(userId);
+}
+
+export function setCachedUserName(userId: string, displayName: string) {
+  userNameCache.set(userId, displayName);
+}
 
 // Timestamp of the last processed message in the help channel (for recovery)
 let lastProcessedMessageTs: string | null = null;
@@ -164,7 +175,7 @@ export async function saveTicketData() {
     }
 
     // Save metadata
-      await client.query("INSERT INTO metadata (key, value) VALUES ('queueMessageTs', $1) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", [JSON.stringify(queueMessageTs)]);
+      await client.query("INSERT INTO metadata (key, value) VALUES ('canvasId', $1) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", [canvasId || '']);
 
     await client.query('COMMIT');
     console.log('✅ Ticket data saved to PostgreSQL');
@@ -220,14 +231,15 @@ export async function loadTicketData(): Promise<boolean> {
       // Load metadata
       const metaRes = await client.query('SELECT * FROM metadata');
       for (const row of metaRes.rows) {
-        if (row.key === 'queueMessageTs') {
-          try {
-            queueMessageTs = JSON.parse(row.value) || [];
-          } catch {
-            queueMessageTs = [];
-          }
+        if (row.key === 'canvasId') {
+          canvasId = row.value || null;
         }
         if (row.key === 'lastProcessedMessageTs') lastProcessedMessageTs = row.value;
+      }
+
+      // Fall back to env var if DB has no canvas ID stored yet
+      if (!canvasId && process.env.CANVAS_ID) {
+        canvasId = process.env.CANVAS_ID;
       }
 
       console.log(`✅ Loaded ${Object.keys(tickets).length} tickets from PostgreSQL`);
@@ -279,17 +291,17 @@ export function resetLeaderboard() {
 }
 
 /**
- * Updates the queue message timestamps (supports up to 2 parts).
+ * Sets the canvas ID for the ticket queue channel canvas.
  */
-export function setQueueMessageTs(ts: string[] | null) {
-  queueMessageTs = ts || [];
+export function setCanvasId(id: string | null) {
+  canvasId = id;
 }
 
 /**
- * Gets the current queue message timestamps.
+ * Gets the canvas ID for the ticket queue channel canvas.
  */
-export function getQueueMessageTs(): string[] {
-  return queueMessageTs;
+export function getCanvasId(): string | null {
+  return canvasId;
 }
 
 /**

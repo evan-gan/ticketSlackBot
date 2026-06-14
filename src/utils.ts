@@ -93,6 +93,42 @@ export function createQueueMessageText(ticketsInQueue: Array<{ threadUrl: string
 }
 
 /**
+ * Builds the entire ticket queue as a single canvas markdown string.
+ * One section = one lookup + one delete + one insert per update cycle, which is
+ * reliable. Always includes the header so the section is findable by
+ * contains_text: "Tickets Needing Response".
+ */
+export function buildCanvasContent(ticketsInQueue: Array<{ threadUrl: string; responders: string[] }>): string {
+  const now = new Date();
+  const timestamp = now.toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  });
+
+  const lines: string[] = [`**🎫 Tickets Needing Response** — _Last updated: ${timestamp}_`];
+
+  if (ticketsInQueue.length === 0) {
+    lines.push('✅ All tickets have been responded to!');
+  } else {
+    ticketsInQueue.forEach((ticket, index) => {
+      const claimStatus = ticket.responders.length === 0
+        ? UNCLAIMED_TEXT
+        : CLAIMED_TEXT_FORMAT.replace('{mentions}', ticket.responders.map(name => `\`@${name}\``).join(', '));
+      lines.push(`**${index + 1}. ${claimStatus}** — [View thread](${ticket.threadUrl})`);
+    });
+  }
+
+  // Two trailing spaces before \n = CommonMark hard line break within one paragraph.
+  // Slack canvas renders this as <br> inside a single <p> section — one section total,
+  // which means only one delete + one insert per queue update.
+  return lines.join('  \n');
+}
+
+/**
  * Splits the queue message into parts if it exceeds Slack's 4000 character limit.
  * Returns an array with 1-2 parts.
  * @param ticketsInQueue - Array of ticket info for tickets currently in queue

@@ -161,8 +161,15 @@ export function registerSlackHandlers(app: App) {
     if (message.user === botUserId) return; // Skip messages from the bot itself
     if (message.bot_id) return; // Skip any bot messages
     
+    // !reset-canvas: user has manually cleared the canvas; just rewrite current queue
+    if (message.text?.includes('!reset-canvas')) {
+      logger.info('🔄 Rewriting canvas after manual clear');
+      await updateQueueMessage(client, logger);
+      return;
+    }
+
     logger.info(`📌 User message detected in tickets channel, reposting queue message`);
-    
+
     // Repost queue message to keep it at the bottom
     await updateQueueMessage(client, logger, true);
   });

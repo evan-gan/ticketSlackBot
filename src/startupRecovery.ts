@@ -4,87 +4,25 @@
  * Checks thread statuses and synchronizes ticket state with reality.
  */
 
-import { tickets, getQueueMessageTs, getLastProcessedMessageTs, ticketsByOriginalTs, setQueueMessageTs } from './data';
+import { tickets, getCanvasId, getLastProcessedMessageTs, ticketsByOriginalTs } from './data';
 import { updateQueueMessage, createTicket } from './tickets';
 import { rateLimitedCall, CallPriority } from './rateLimiter';
-import { QUEUE_MESSAGE_HEADER } from './constants';
 
 /**
- * Cleans up old queue messages in the tickets channel on startup.
- * Deletes any previous queue messages that might have been left behind.
+ * Verifies the stored canvas ID on startup.
+ * The queue is now a channel canvas rather than pinned messages, so there is nothing
+ * to delete. We just log whether we have an existing canvas ID so the first
+ * updateQueueMessage call knows whether to create one.
  */
 export async function cleanupOldQueueMessages(
-  client: any,
+  _client: any,
   logger: any
 ): Promise<void> {
-  try {
-    const ticketsChannel = process.env.TICKETS_CHANNEL;
-    if (!ticketsChannel) {
-      logger.error('❌ TICKETS_CHANNEL environment variable is not set');
-      return;
-    }
-
-    logger.info('🧹 Cleaning up old queue messages...');
-
-    // Get the stored queue message timestamps
-    const storedQueueTsList = getQueueMessageTs();
-    const storedQueueTsSet = new Set(storedQueueTsList || []);
-
-    // Fetch recent messages from tickets channel to find old queue messages
-    const result: any = await rateLimitedCall('conversations.history', () =>
-      client.conversations.history({
-        channel: ticketsChannel,
-        limit: 100, // Check last 100 messages
-      }),
-      CallPriority.Low
-    );
-
-    if (!result.ok || !result.messages) {
-      logger.warn('⚠️  Failed to fetch tickets channel history');
-      return;
-    }
-
-    let deletedCount = 0;
-    for (const msg of result.messages) {
-      // Check if message is a queue message (contains the header and is from the bot)
-      if (msg.bot_id && msg.text && msg.text.includes(QUEUE_MESSAGE_HEADER)) {
-        // If it's not one of the currently stored queue messages, delete it
-        if (!storedQueueTsSet.has(msg.ts)) {
-          try {
-            await rateLimitedCall('chat.delete', () =>
-              client.chat.delete({
-                channel: ticketsChannel,
-                ts: msg.ts,
-              }),
-              CallPriority.Low
-            );
-            deletedCount++;
-            logger.info(`🗑️  Deleted old queue message: ${msg.ts}`);
-          } catch (error) {
-            logger.warn(`Failed to delete old queue message ${msg.ts}:`, error);
-          }
-        }
-      }
-    }
-
-    if (deletedCount > 0) {
-      logger.info(`✅ Cleaned up ${deletedCount} old queue message(s)`);
-    } else {
-      logger.info('✅ No old queue messages to clean up');
-    }
-
-    // If stored queue messages were deleted or don't exist, clear the timestamps
-    if (storedQueueTsList && storedQueueTsList.length > 0) {
-      const validTsList = storedQueueTsList.filter((ts) =>
-        result.messages.some((msg: any) => msg.ts === ts)
-      );
-      if (validTsList.length !== storedQueueTsList.length) {
-        logger.info('ℹ️  Some stored queue messages no longer exist, will create new ones');
-        setQueueMessageTs(validTsList.length > 0 ? validTsList : null);
-      }
-    }
-  } catch (error) {
-    logger.error('❌ Failed to clean up old queue messages:', error);
+  const existing = getCanvasId();
+  if (existing) {
+    logger.info(`ℹ️  Existing queue canvas found: ${existing}`);
+  } else {
+    logger.info('ℹ️  No queue canvas stored — will create one on first queue update');
   }
 }
 

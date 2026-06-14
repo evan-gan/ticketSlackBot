@@ -140,4 +140,12 @@ export const ENDPOINT_RATE_LIMITS: Record<string, { requestsPerMinute: number; r
   // Tier 4: 100 per minute
   'conversations.members': { requestsPerMinute: 100 },
   'auth.test': { requestsPerMinute: 100 },
+
+  // Canvas API endpoints (Tier 2: 20 per minute)
+  'conversations.canvases.create': { requestsPerMinute: 20 },
+  'canvases.edit': { requestsPerMinute: 20 },
+  'canvases.sections.lookup': { requestsPerMinute: 20 },
+
+  // Tier 3: 50 per minute
+  'users.info': { requestsPerMinute: 50 },
 };

@@ -6,12 +6,14 @@ import {
   getTicketByOriginalTs,
   saveTicketData,
   addResolution,
-  getQueueMessageTs,
-  setQueueMessageTs,
+  getCanvasId,
+  setCanvasId,
   isTicketChannelMember,
+  getCachedUserName,
+  setCachedUserName,
 } from './data';
 import { GRACE_PERIOD_MS, TICKET_RESOLVED_MESSAGE } from './constants';
-import { createWelcomeBlocks, getThreadUrl, createQueueMessageText, splitQueueMessage } from './utils';
+import { createWelcomeBlocks, getThreadUrl, buildCanvasContent } from './utils';
 import { rateLimitedCall, CallPriority } from './rateLimiter';
 
 /**
@@ -285,8 +287,8 @@ export async function unresolveTicket(
 }
 
 /**
- * Searches the tickets channel for old messages from the bot and deletes them,
- * except for the current pinned queue message.
+ * Searches the tickets channel for old bot messages and deletes them.
+ * Handles migration from the old message-based queue to the canvas-based queue.
  */
 export async function cleanupOldBotMessages(client: any, logger: any): Promise<void> {
   try {
@@ -296,9 +298,6 @@ export async function cleanupOldBotMessages(client: any, logger: any): Promise<v
       return;
     }
 
-    const currentQueueTs = getQueueMessageTs();
-    
-    // Get bot user ID
     const authResult: any = await rateLimitedCall('auth.test', () => client.auth.test());
     if (!authResult.ok) {
       logger.error('❌ Failed to get bot user ID for cleanup');
@@ -308,7 +307,6 @@ export async function cleanupOldBotMessages(client: any, logger: any): Promise<v
 
     logger.info(`🧹 Starting cleanup of old bot messages in ${ticketsChannel}`);
 
-    // Fetch messages from the tickets channel
     const result: any = await rateLimitedCall('conversations.history', () =>
       client.conversations.history({
         channel: ticketsChannel,
@@ -320,8 +318,7 @@ export async function cleanupOldBotMessages(client: any, logger: any): Promise<v
     if (result.ok && result.messages) {
       let deletedCount = 0;
       for (const message of result.messages) {
-        // If message is from the bot and is not the current queue message
-        if (message.user === botId && message.ts !== currentQueueTs) {
+        if (message.user === botId) {
           try {
             await rateLimitedCall('chat.delete', () =>
               client.chat.delete({
@@ -332,7 +329,6 @@ export async function cleanupOldBotMessages(client: any, logger: any): Promise<v
             );
             deletedCount++;
           } catch (deleteError: any) {
-            // Log individual deletion failures but don't stop cleanup
             if (deleteError?.data?.error === 'cant_delete_message') {
               logger.info(`⚠️  Could not delete message ${message.ts} (permissions or age restriction)`);
             } else {
@@ -352,117 +348,128 @@ export async function cleanupOldBotMessages(client: any, logger: any): Promise<v
   }
 }
 
+async function resolveDisplayName(client: any, userId: string): Promise<string> {
+  const cached = getCachedUserName(userId);
+  if (cached) return cached;
+  try {
+    const result: any = await rateLimitedCall('users.info', () =>
+      client.apiCall('users.info', { user: userId }),
+      CallPriority.Low
+    );
+    const name = result?.user?.profile?.display_name || result?.user?.profile?.real_name || userId;
+    setCachedUserName(userId, name);
+    return name;
+  } catch {
+    return userId;
+  }
+}
+
+// Mutex so concurrent calls don't each insert a new copy before the previous one is indexed
+let canvasUpdateInProgress = false;
+let canvasPendingArgs: [any, any] | null = null;
+
 /**
- * Updates or creates the pinned queue message in the tickets channel.
- * Shows all tickets currently needing help.
- */
-/**
- * Updates the queue message in the tickets channel.
- * Updates the message in place by default, or reposts if needed.
- * Handles large queues by splitting across multiple messages if needed (max 2 parts).
- * @param client - Slack client
- * @param logger - Logger instance
- * @param forceRepost - If true, deletes and reposts message instead of updating in place
+ * Updates the ticket queue in the tickets channel canvas.
+ * The entire queue is one markdown section — one lookup finds it, one delete removes it,
+ * one insert writes the new content. No multi-section coordination needed.
  */
 export async function updateQueueMessage(
   client: any,
   logger: any,
-  forceRepost: boolean = false
+  _forceRepost: boolean = false
 ): Promise<boolean> {
+  if (canvasUpdateInProgress) {
+    canvasPendingArgs = [client, logger];
+    return true;
+  }
+  canvasUpdateInProgress = true;
   try {
     const ticketsChannel = process.env.TICKETS_CHANNEL;
     if (!ticketsChannel) return false;
 
-    // Get all tickets in queue
-    const ticketsInQueue = Object.values(tickets)
-      .filter(t => t.inQueue && !t.resolved)
-      .map(t => ({
-        threadUrl: getThreadUrl(t.originalChannel, t.originalTs, t.ticketMessageTs),
-        responders: t.responders,
-      }));
+    const ticketsInQueue = await Promise.all(
+      Object.values(tickets)
+        .filter(t => t.inQueue && !t.resolved)
+        .map(async t => ({
+          threadUrl: getThreadUrl(t.originalChannel, t.originalTs, t.ticketMessageTs),
+          responders: await Promise.all(t.responders.map(id => resolveDisplayName(client, id))),
+        }))
+    );
 
-    // Split queue message into parts if needed (Slack 4000 char limit)
-    const queueParts = splitQueueMessage(ticketsInQueue);
-    const currentQueueTs = getQueueMessageTs();
-    const newQueueTs: string[] = [];
+    const content = buildCanvasContent(ticketsInQueue);
+    let canvasId = getCanvasId();
 
-    // Try to update existing messages if same number of parts
-    if (!forceRepost && currentQueueTs.length === queueParts.length && currentQueueTs.length > 0) {
-      let updateSuccess = true;
-      for (let i = 0; i < queueParts.length; i++) {
-        try {
-          await rateLimitedCall('chat.update', () =>
-            client.chat.update({
-              channel: ticketsChannel,
-              ts: currentQueueTs[i],
-              text: queueParts[i],
-            }),
-            CallPriority.Low
-          );
-          newQueueTs.push(currentQueueTs[i]);
-        } catch (error) {
-          logger.warn(`Failed to update queue message part ${i + 1}, will repost:`, error);
-          updateSuccess = false;
-          break;
-        }
-      }
-      if (updateSuccess) {
-        return true;
-      }
-    }
-
-    // Delete old queue messages if they exist
-    if (currentQueueTs.length > 0) {
-      for (const ts of currentQueueTs) {
-        try {
-          await rateLimitedCall('chat.delete', () =>
-            client.chat.delete({
-              channel: ticketsChannel,
-              ts: ts,
-            }),
-            CallPriority.Low
-          );
-        } catch (error) {
-          // Message might already be deleted, that's fine
-          logger.info(`Old queue message ${ts} not found or already deleted`);
-        }
-      }
-    }
-
-    // Post new queue messages
-    for (let i = 0; i < queueParts.length; i++) {
-      const result: any = await rateLimitedCall('chat.postMessage', () =>
-        client.chat.postMessage({
-          channel: ticketsChannel,
-          text: queueParts[i],
+    if (!canvasId) {
+      const result: any = await rateLimitedCall('conversations.canvases.create', () =>
+        client.apiCall('conversations.canvases.create', {
+          channel_id: ticketsChannel,
+          document_content: { type: 'markdown', markdown: content },
         }),
         CallPriority.Low
       );
-      newQueueTs.push(result.ts);
-      
-      // Pin the message (try-catch to prevent losing timestamp if pinning fails)
+      if (result.ok && result.canvas_id) {
+        setCanvasId(result.canvas_id);
+        logger.info(`✅ Created channel canvas: ${result.canvas_id}`);
+        await saveTicketData();
+      } else {
+        logger.error('❌ Canvas create response missing canvas_id:', result);
+        return false;
+      }
+      return true;
+    }
+
+    logger.info(`📋 Updating canvas ${canvasId} with ${ticketsInQueue.length} tickets`);
+
+    // Find the existing queue section (always contains "Tickets Needing Response")
+    const sectionIds = new Set<string>();
+    for (const term of ['Tickets Needing Response', 'All tickets have been responded', 'Not claimed', 'Claimed by', 'View thread']) {
       try {
-        await rateLimitedCall('pins.add', () =>
-          client.pins.add({
-            channel: ticketsChannel,
-            timestamp: result.ts,
+        const r: any = await rateLimitedCall('canvases.sections.lookup', () =>
+          client.apiCall('canvases.sections.lookup', {
+            canvas_id: canvasId,
+            criteria: { contains_text: term },
           }),
           CallPriority.Low
         );
-      } catch (pinError) {
-        logger.warn(`Failed to pin queue message part ${i + 1}, but timestamp was saved:`, pinError);
-      }
+        if (r.ok && r.sections) {
+          for (const s of r.sections) sectionIds.add(s.id);
+        }
+      } catch { /* ignore */ }
     }
-    
-    setQueueMessageTs(newQueueTs);
-    
-    // Save immediately after setting new timestamps
-    await saveTicketData();
-    
+
+    logger.info(`📋 Found ${sectionIds.size} section(s) to delete`);
+    for (const id of sectionIds) {
+      try {
+        await rateLimitedCall('canvases.edit', () =>
+          client.apiCall('canvases.edit', {
+            canvas_id: canvasId,
+            changes: [{ operation: 'delete', section_id: id }],
+          }),
+          CallPriority.Low
+        );
+      } catch { /* section already gone — that's fine */ }
+    }
+
+    const insertResult: any = await rateLimitedCall('canvases.edit', () =>
+      client.apiCall('canvases.edit', {
+        canvas_id: canvasId,
+        changes: [{ operation: 'insert_at_end', document_content: { type: 'markdown', markdown: content } }],
+      }),
+      CallPriority.Low
+    );
+    logger.info(`📋 Insert result ok=${insertResult?.ok}, content length=${content.length}`);
+
     return true;
-  } catch (error) {
-    logger.error('❌ Error updating queue message:', error);
+  } catch (error: any) {
+    logger.error('❌ Error updating queue canvas:', error?.data?.response_metadata?.messages ?? error);
     return false;
+  } finally {
+    canvasUpdateInProgress = false;
+    if (canvasPendingArgs) {
+      const [pendingClient, pendingLogger] = canvasPendingArgs;
+      canvasPendingArgs = null;
+      await updateQueueMessage(pendingClient, pendingLogger);
+    }
   }
 }
 

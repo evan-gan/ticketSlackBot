@@ -6,7 +6,7 @@
 
 ## What this project does
 
-A **Slack FAQ ticketing bot** for a help channel. When a user posts in the help channel, the bot opens a ticket: it replies with a welcome message + "Resolve" button, and adds the ticket to a live **queue message** in a separate tickets (staff) channel. Staff claim tickets by replying in-thread; a grace timer re-queues a ticket if staff go quiet. Tickets can be resolved manually (button), automatically (AI matches the question to an FAQ entry and replies with a link), or re-opened if the user follows up. A daily **leaderboard** tracks who resolved the most tickets. All state is persisted to PostgreSQL so the bot survives restarts, and a startup-recovery pass catches anything missed while offline.
+A **Slack FAQ ticketing bot** for a help channel. When a user posts in the help channel, the bot opens a ticket: it replies with a welcome message + "Resolve" button, and adds the ticket to a live **queue web page** served by the bot itself (port `WEB_PORT`, default 3000). Staff claim tickets by replying in-thread; a grace timer re-queues a ticket if staff go quiet. Tickets can be resolved manually (Slack button, or the override button on the web page), automatically (AI matches the question to an FAQ entry and replies with a link), or re-opened if the user follows up. A daily **leaderboard** tracks who resolved the most tickets. All state is persisted to PostgreSQL so the bot survives restarts, and a startup-recovery pass catches anything missed while offline.
 
 **Note:** Despite the project name, AI FAQ matching uses the **Groq API** (`openai/gpt-oss-20b`), not Anthropic.
 
@@ -45,7 +45,7 @@ Set in `.env` (see `.env.example`). **Required** (bot throws on startup if missi
 - `TICKETS_CHANNEL` — staff channel where the queue lives
 - `DATABASE_URL` — `postgres://user:pass@host:port/db`
 
-**Optional** (have defaults): `SLACK_WORKSPACE_DOMAIN`, `AI_API_KEY` (Groq; AI skipped if absent), `FAQ_BASE_URL`, `FAQ_MARKDOWN_URL`, and message-text overrides like `WELCOME_MESSAGE_TEXT`, `TICKET_RESOLVED_MESSAGE`. All secrets come from env — none are hardcoded.
+**Optional** (have defaults): `SLACK_WORKSPACE_DOMAIN`, `AI_API_KEY` (Groq; AI skipped if absent), `FAQ_BASE_URL`, `FAQ_MARKDOWN_URL`, `WEB_PORT` (queue web page port, default 3000, `0` disables), and message-text overrides like `WELCOME_MESSAGE_TEXT`, `TICKET_RESOLVED_MESSAGE`. All secrets come from env — none are hardcoded.
 
 ---
 
@@ -61,6 +61,7 @@ ticketSlackBot/
 │   ├── hcai.ts             # AI FAQ matching via Groq
 │   ├── rateLimiter.ts      # Per-endpoint priority rate limiter for Slack API
 │   ├── startupRecovery.ts  # Recovery after restart/downtime
+│   ├── webServer.ts        # HTTP server serving the ticket queue as an HTML page
 │   ├── utils.ts            # Slack URL + Block Kit formatting helpers
 │   └── constants.ts        # All tunable config (timers, intervals, messages, rate limits)
 ├── tests/
@@ -81,11 +82,12 @@ ticketSlackBot/
 
 - **Bot startup & scheduled jobs** → [src/main.ts](../src/main.ts). Intervals: member refresh (1 hr), grace-timer check (30 s), data backup (5 min), leaderboard post (24 hr). Also kicks off startup recovery.
 - **Reacting to Slack events** → [src/slack.ts](../src/slack.ts). New help-channel message → create ticket. Thread replies → `handleStaffResponse` / `handleUserResponse`. "Resolve" button → `resolveTicket`. Also: `getBotUserId`, `refreshTicketChannelMembers` (who counts as staff), `notifyStartup`, `postLeaderboardAndReset`.
-- **Ticket state machine** → [src/tickets.ts](../src/tickets.ts). `createTicket`, `handleStaffResponse`, `handleUserResponse`, `resolveTicket`, `unresolveTicket`, `updateQueueMessage` (renders the live queue, splits across 2 messages if > 3800 chars), `checkGraceTimers` (re-queues stale tickets unless `!open` was used), `cleanupOldBotMessages`.
-- **Persistence & data models** → [src/data.ts](../src/data.ts). Interfaces `TicketInfo`, `LBEntry`. Tables: `tickets`, `leaderboard`, `leaderboard_history`, `metadata`. Functions: `initDB`, `saveTicketData`, `loadTicketData`, `addResolution`, `resetLeaderboard`, lookups `getTicketByOriginalTs` / `getTicketByTicketTs`. In-memory mirrors: `tickets`, `ticketsByOriginalTs`, `lbForToday`, `queueMessageTs`.
+- **Ticket state machine** → [src/tickets.ts](../src/tickets.ts). `createTicket`, `handleStaffResponse`, `handleUserResponse`, `resolveTicket`, `unresolveTicket`, `updateQueue` (rebuilds the queue snapshot for the web page), `checkGraceTimers` (re-queues stale tickets unless `!open` was used), `cleanupOldBotMessages`.
+- **Persistence & data models** → [src/data.ts](../src/data.ts). Interfaces `TicketInfo`, `LBEntry`. Tables: `tickets`, `leaderboard`, `leaderboard_history`, `metadata`. Functions: `initDB`, `saveTicketData`, `loadTicketData`, `addResolution`, `resetLeaderboard`, lookups `getTicketByOriginalTs` / `getTicketByTicketTs`. In-memory mirrors: `tickets`, `ticketsByOriginalTs`, `lbForToday`.
 - **AI FAQ auto-answers** → [src/hcai.ts](../src/hcai.ts). Fetches + parses FAQ markdown into slugged entries, `checkFAQ` asks Groq which slugs match, returns linked message or `null`. Entries are cached.
 - **Slack rate limiting** → [src/rateLimiter.ts](../src/rateLimiter.ts). `EndpointRateLimiter` (sliding-window, priority queue), `RateLimiterManager`, and the `rateLimitedCall(endpoint, fn, priority)` wrapper used for every Slack call.
-- **Restart recovery** → [src/startupRecovery.ts](../src/startupRecovery.ts). `scanForMissedMessages`, `initializeQueueOnStartup`, `cleanupOldQueueMessages`, `performStartupRecovery`, `checkThreadStatus`.
+- **Restart recovery** → [src/startupRecovery.ts](../src/startupRecovery.ts). `scanForMissedMessages`, `initializeQueueOnStartup`, `performStartupRecovery`, `checkThreadStatus`.
+- **Queue web page** → [src/webServer.ts](../src/webServer.ts). `startWebServer` (built-in `http`, port from `WEB_PORT`, default 3000, `0` disables) serves `GET /` — the auto-refreshing live queue, with a manual-resolve override button per ticket (`POST /resolve`, handler injected from `main.ts` → `resolveTicket` as `'system'`). `updateQueue` pushes each queue state via `setQueueSnapshot`, so page loads never hit the Slack API. The endpoint is unauthenticated — don't expose the port publicly as-is.
 - **Formatting helpers** → [src/utils.ts](../src/utils.ts). `formatTs`, `getThreadUrl`, `createWelcomeBlocks`, `splitQueueMessage`.
 - **Tuning behavior** → [src/constants.ts](../src/constants.ts). Grace period, check/save/refresh/leaderboard intervals, all message strings (most read from env), startup-notification user, and `ENDPOINT_RATE_LIMITS` (per-endpoint Slack limits).
 

@@ -6,14 +6,13 @@ import {
   getTicketByOriginalTs,
   saveTicketData,
   addResolution,
-  getCanvasId,
-  setCanvasId,
   isTicketChannelMember,
   getCachedUserName,
   setCachedUserName,
 } from './data';
 import { GRACE_PERIOD_MS, TICKET_RESOLVED_MESSAGE } from './constants';
-import { createWelcomeBlocks, getThreadUrl, buildCanvasContent } from './utils';
+import { createWelcomeBlocks, getThreadUrl } from './utils';
+import { setQueueSnapshot } from './webServer';
 import { rateLimitedCall, CallPriority } from './rateLimiter';
 
 /**
@@ -57,7 +56,7 @@ export async function createTicket(
       console.info(`✅ Ticket created for message ${message.ts}`);
 
       // Update the queue message
-      await updateQueueMessage(client, logger);
+      await updateQueue(client, logger);
       await saveTicketData();
       return ticketInfo;
     }
@@ -100,7 +99,7 @@ export async function handleStaffResponse(
     // First response - remove from queue
     if (ticket.inQueue) {
       ticket.inQueue = false;
-      await updateQueueMessage(client, logger);
+      await updateQueue(client, logger);
     }
   }
 
@@ -123,7 +122,7 @@ export async function handleStaffResponse(
   }
 
   // Update the queue if needed
-  await updateQueueMessage(client, logger);
+  await updateQueue(client, logger);
   await saveTicketData();
 
   return true;
@@ -216,7 +215,7 @@ export async function resolveTicket(
 
     // Remove from queue
     ticket.inQueue = false;
-    await updateQueueMessage(client, logger);
+    await updateQueue(client, logger);
 
     // Update leaderboard
     addResolution(resolverId);
@@ -274,7 +273,7 @@ export async function unresolveTicket(
     // Add back to queue if there are no responders or if needed
     if (!ticket.inQueue && ticket.responders.length === 0) {
       ticket.inQueue = true;
-      await updateQueueMessage(client, logger);
+      await updateQueue(client, logger);
     }
 
     await saveTicketData();
@@ -288,7 +287,7 @@ export async function unresolveTicket(
 
 /**
  * Searches the tickets channel for old bot messages and deletes them.
- * Handles migration from the old message-based queue to the canvas-based queue.
+ * Cleans up leftovers from the old message-based queue.
  */
 export async function cleanupOldBotMessages(client: any, logger: any): Promise<void> {
   try {
@@ -364,112 +363,28 @@ async function resolveDisplayName(client: any, userId: string): Promise<string> 
   }
 }
 
-// Mutex so concurrent calls don't each insert a new copy before the previous one is indexed
-let canvasUpdateInProgress = false;
-let canvasPendingArgs: [any, any] | null = null;
-
 /**
- * Updates the ticket queue in the tickets channel canvas.
- * The entire queue is one markdown section — one lookup finds it, one delete removes it,
- * one insert writes the new content. No multi-section coordination needed.
+ * Rebuilds the ticket queue snapshot served by the web page.
+ * Only Slack call is users.info for uncached responder display names.
  */
-export async function updateQueueMessage(
-  client: any,
-  logger: any,
-  _forceRepost: boolean = false
-): Promise<boolean> {
-  if (canvasUpdateInProgress) {
-    canvasPendingArgs = [client, logger];
-    return true;
-  }
-  canvasUpdateInProgress = true;
+export async function updateQueue(client: any, logger: any): Promise<boolean> {
   try {
-    const ticketsChannel = process.env.TICKETS_CHANNEL;
-    if (!ticketsChannel) return false;
-
     const ticketsInQueue = await Promise.all(
       Object.values(tickets)
         .filter(t => t.inQueue && !t.resolved)
         .map(async t => ({
+          ticketTs: t.ticketMessageTs,
           threadUrl: getThreadUrl(t.originalChannel, t.originalTs, t.ticketMessageTs),
           responders: await Promise.all(t.responders.map(id => resolveDisplayName(client, id))),
         }))
     );
 
-    const content = buildCanvasContent(ticketsInQueue);
-    let canvasId = getCanvasId();
-
-    if (!canvasId) {
-      const result: any = await rateLimitedCall('conversations.canvases.create', () =>
-        client.apiCall('conversations.canvases.create', {
-          channel_id: ticketsChannel,
-          document_content: { type: 'markdown', markdown: content },
-        }),
-        CallPriority.Low
-      );
-      if (result.ok && result.canvas_id) {
-        setCanvasId(result.canvas_id);
-        logger.info(`✅ Created channel canvas: ${result.canvas_id}`);
-        await saveTicketData();
-      } else {
-        logger.error('❌ Canvas create response missing canvas_id:', result);
-        return false;
-      }
-      return true;
-    }
-
-    logger.info(`📋 Updating canvas ${canvasId} with ${ticketsInQueue.length} tickets`);
-
-    // Find the existing queue section (always contains "Tickets Needing Response")
-    const sectionIds = new Set<string>();
-    for (const term of ['Tickets Needing Response', 'All tickets have been responded', 'Not claimed', 'Claimed by', 'View thread']) {
-      try {
-        const r: any = await rateLimitedCall('canvases.sections.lookup', () =>
-          client.apiCall('canvases.sections.lookup', {
-            canvas_id: canvasId,
-            criteria: { contains_text: term },
-          }),
-          CallPriority.Low
-        );
-        if (r.ok && r.sections) {
-          for (const s of r.sections) sectionIds.add(s.id);
-        }
-      } catch { /* ignore */ }
-    }
-
-    logger.info(`📋 Found ${sectionIds.size} section(s) to delete`);
-    for (const id of sectionIds) {
-      try {
-        await rateLimitedCall('canvases.edit', () =>
-          client.apiCall('canvases.edit', {
-            canvas_id: canvasId,
-            changes: [{ operation: 'delete', section_id: id }],
-          }),
-          CallPriority.Low
-        );
-      } catch { /* section already gone — that's fine */ }
-    }
-
-    const insertResult: any = await rateLimitedCall('canvases.edit', () =>
-      client.apiCall('canvases.edit', {
-        canvas_id: canvasId,
-        changes: [{ operation: 'insert_at_end', document_content: { type: 'markdown', markdown: content } }],
-      }),
-      CallPriority.Low
-    );
-    logger.info(`📋 Insert result ok=${insertResult?.ok}, content length=${content.length}`);
-
+    setQueueSnapshot(ticketsInQueue);
+    logger.info(`📋 Queue updated with ${ticketsInQueue.length} tickets`);
     return true;
-  } catch (error: any) {
-    logger.error('❌ Error updating queue canvas:', error?.data?.response_metadata?.messages ?? error);
+  } catch (error) {
+    logger.error('❌ Error updating queue:', error);
     return false;
-  } finally {
-    canvasUpdateInProgress = false;
-    if (canvasPendingArgs) {
-      const [pendingClient, pendingLogger] = canvasPendingArgs;
-      canvasPendingArgs = null;
-      await updateQueueMessage(pendingClient, pendingLogger);
-    }
   }
 }
 
@@ -501,7 +416,7 @@ export async function checkGraceTimers(
   }
 
   if (queueChanged) {
-    await updateQueueMessage(client, logger);
+    await updateQueue(client, logger);
     await saveTicketData();
   }
 }

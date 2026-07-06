@@ -74,16 +74,6 @@ export const RESOLVE_BUTTON_TEXT = 'Resolve';
 export const TICKET_RESOLVED_MESSAGE = process.env.TICKET_RESOLVED_MESSAGE || 'This ticket has been marked as resolved. Feel free to send a new message to this thread to un-resolve it and ask further questions. If you have a new question, please post it in {HELP_CHANNEL} instead of replying here.';
 
 /**
- * Message shown in queue when all tickets are handled.
- */
-export const ALL_TICKETS_RESOLVED_MESSAGE = '✅ *All tickets have been responded to!*';
-
-/**
- * Header for the queue message.
- */
-export const QUEUE_MESSAGE_HEADER = '🎫 *Tickets Needing Response:*';
-
-/**
  * Text shown for unclaimed tickets in the queue.
  */
 export const UNCLAIMED_TEXT = 'Not claimed';
@@ -92,6 +82,22 @@ export const UNCLAIMED_TEXT = 'Not claimed';
  * Text format for claimed tickets. Use {mentions} placeholder.
  */
 export const CLAIMED_TEXT_FORMAT = 'Claimed by: {mentions}';
+
+// ============================================
+// WEB SERVER
+// ============================================
+
+/**
+ * Port for the HTTP server that serves the ticket queue as an HTML page.
+ * Set WEB_PORT=0 to disable the web server entirely.
+ * Default: 3000
+ */
+export const WEB_PORT = process.env.WEB_PORT !== undefined ? Number(process.env.WEB_PORT) : 3000;
+
+/**
+ * How often the queue web page auto-refreshes in the browser, in seconds.
+ */
+export const WEB_PAGE_REFRESH_SECONDS = 30;
 
 // ============================================
 // STARTUP & LOGGING
@@ -140,11 +146,6 @@ export const ENDPOINT_RATE_LIMITS: Record<string, { requestsPerMinute: number; r
   // Tier 4: 100 per minute
   'conversations.members': { requestsPerMinute: 100 },
   'auth.test': { requestsPerMinute: 100 },
-
-  // Canvas API endpoints (Tier 2: 20 per minute)
-  'conversations.canvases.create': { requestsPerMinute: 20 },
-  'canvases.edit': { requestsPerMinute: 20 },
-  'canvases.sections.lookup': { requestsPerMinute: 20 },
 
   // Tier 3: 50 per minute
   'users.info': { requestsPerMinute: 50 },

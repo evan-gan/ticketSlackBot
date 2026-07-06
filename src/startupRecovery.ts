@@ -4,27 +4,9 @@
  * Checks thread statuses and synchronizes ticket state with reality.
  */
 
-import { tickets, getCanvasId, getLastProcessedMessageTs, ticketsByOriginalTs } from './data';
-import { updateQueueMessage, createTicket } from './tickets';
+import { tickets, getLastProcessedMessageTs, ticketsByOriginalTs } from './data';
+import { updateQueue, createTicket } from './tickets';
 import { rateLimitedCall, CallPriority } from './rateLimiter';
-
-/**
- * Verifies the stored canvas ID on startup.
- * The queue is now a channel canvas rather than pinned messages, so there is nothing
- * to delete. We just log whether we have an existing canvas ID so the first
- * updateQueueMessage call knows whether to create one.
- */
-export async function cleanupOldQueueMessages(
-  _client: any,
-  logger: any
-): Promise<void> {
-  const existing = getCanvasId();
-  if (existing) {
-    logger.info(`ℹ️  Existing queue canvas found: ${existing}`);
-  } else {
-    logger.info('ℹ️  No queue canvas stored — will create one on first queue update');
-  }
-}
 
 /**
  * Scans the help channel for messages posted while bot was offline.
@@ -117,25 +99,18 @@ export async function scanForMissedMessages(
 }
 
 /**
- * Initializes the queue message on startup with current unresolved tickets.
- * Cleans up any old queue messages first.
+ * Initializes the queue snapshot on startup with current unresolved tickets.
  */
 export async function initializeQueueOnStartup(
   client: any,
   logger: any
 ): Promise<void> {
   try {
-    logger.info('🔄 Initializing queue message with stored tickets...');
-
-    // First, clean up any old queue messages
-    await cleanupOldQueueMessages(client, logger);
-
-    // Update/create queue message with all current tickets in queue
-    await updateQueueMessage(client, logger);
-
-    logger.info('✅ Queue message initialized successfully');
+    logger.info('🔄 Initializing queue with stored tickets...');
+    await updateQueue(client, logger);
+    logger.info('✅ Queue initialized successfully');
   } catch (error) {
-    logger.error('❌ Failed to initialize queue message:', error);
+    logger.error('❌ Failed to initialize queue:', error);
   }
 }
 
@@ -192,7 +167,7 @@ export async function performStartupRecovery(
     );
 
     // Update queue message after recovery
-    await updateQueueMessage(client, logger);
+    await updateQueue(client, logger);
   } catch (error) {
     logger.error('❌ Startup recovery failed:', error);
   }

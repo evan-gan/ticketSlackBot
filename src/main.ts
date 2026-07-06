@@ -2,7 +2,7 @@ import * as dotenv from 'dotenv';
 dotenv.config();
 
 import { App, LogLevel } from '@slack/bolt';
-import { loadTicketData } from './data';
+import { loadTicketData, getTicketByTicketTs } from './data';
 import { registerSlackHandlers, refreshTicketChannelMembers, postLeaderboardAndReset, notifyStartup, getBotUserId } from './slack';
 import {
   TIMER_CHECK_INTERVAL_MS,
@@ -10,7 +10,9 @@ import {
   MEMBER_REFRESH_INTERVAL_MS,
   LEADERBOARD_POST_INTERVAL_MS,
   STARTUP_NOTIFICATION_USER_ID,
+  WEB_PORT,
 } from './constants';
+import { startWebServer } from './webServer';
 
 // Validate required environment variables
 const HELP_CHANNEL = process.env.HELP_CHANNEL;
@@ -47,6 +49,16 @@ async function startBot() {
     // Start the app
     await app.start();
     console.log('⚡️ Slack Bolt app is running!');
+
+    // Serve the ticket queue as an HTML page with manual resolve buttons
+    if (WEB_PORT > 0) {
+      const { resolveTicket } = await import('./tickets');
+      startWebServer(WEB_PORT, console, async (ticketTs: string) => {
+        const ticket = getTicketByTicketTs(ticketTs);
+        if (!ticket) return false;
+        return resolveTicket(ticket, 'system', client, console);
+      });
+    }
 
     // Send startup notification
     const client = app.client;

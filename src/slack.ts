@@ -16,7 +16,6 @@ import {
   handleStaffResponse,
   handleUserResponse,
   resolveTicket,
-  updateQueueMessage,
 } from './tickets';
 import { checkFAQ } from './hcai';
 
@@ -140,38 +139,6 @@ export function registerSlackHandlers(app: App) {
         }
       })();
     }
-  });
-
-  // Listen for new messages in the tickets channel to repost queue message at bottom
-  app.event('message', async ({ event, client, logger }) => {
-    const message = event as any;
-    
-    // Debug logging
-    if (event.channel === ticketsChannel) {
-      logger.info(`📨 Message in tickets channel - user: ${message.user}, bot_id: ${message.bot_id}, thread: ${message.thread_ts}, subtype: ${message.subtype}`);
-    }
-    
-    // Only process new messages in tickets channel (not thread replies)
-    if (event.channel !== ticketsChannel) return;
-    if (message.thread_ts) return; // Skip thread replies
-    if (message.subtype) return; // Skip edited messages, message_deleted, etc.
-    
-    // Skip bot messages - check if user is the bot itself
-    if (!message.user) return; // No user means it's not a regular message
-    if (message.user === botUserId) return; // Skip messages from the bot itself
-    if (message.bot_id) return; // Skip any bot messages
-    
-    // !reset-canvas: user has manually cleared the canvas; just rewrite current queue
-    if (message.text?.includes('!reset-canvas')) {
-      logger.info('🔄 Rewriting canvas after manual clear');
-      await updateQueueMessage(client, logger);
-      return;
-    }
-
-    logger.info(`📌 User message detected in tickets channel, reposting queue message`);
-
-    // Repost queue message to keep it at the bottom
-    await updateQueueMessage(client, logger, true);
   });
 
   // Listen for thread replies to handle staff responses and user responses

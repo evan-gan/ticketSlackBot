@@ -120,9 +120,6 @@ export const ticketsByOriginalTs: Record<string, string> = {};
 // Tracks ticket resolutions for the current day's leaderboard
 export let lbForToday: LBEntry[] = [];
 
-// Canvas ID of the channel canvas used for the ticket queue in the tickets channel
-export let canvasId: string | null = null;
-
 // Cache of user IDs to display names to avoid repeated users.info calls
 const userNameCache = new Map<string, string>();
 
@@ -173,9 +170,6 @@ export async function saveTicketData() {
     for (const entry of lbForToday) {
       await client.query('INSERT INTO leaderboard (slack_id, count_of_tickets) VALUES ($1, $2)', [entry.slack_id, entry.count_of_tickets]);
     }
-
-    // Save metadata
-      await client.query("INSERT INTO metadata (key, value) VALUES ('canvasId', $1) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", [canvasId || '']);
 
     await client.query('COMMIT');
     console.log('✅ Ticket data saved to PostgreSQL');
@@ -231,15 +225,7 @@ export async function loadTicketData(): Promise<boolean> {
       // Load metadata
       const metaRes = await client.query('SELECT * FROM metadata');
       for (const row of metaRes.rows) {
-        if (row.key === 'canvasId') {
-          canvasId = row.value || null;
-        }
         if (row.key === 'lastProcessedMessageTs') lastProcessedMessageTs = row.value;
-      }
-
-      // Fall back to env var if DB has no canvas ID stored yet
-      if (!canvasId && process.env.CANVAS_ID) {
-        canvasId = process.env.CANVAS_ID;
       }
 
       console.log(`✅ Loaded ${Object.keys(tickets).length} tickets from PostgreSQL`);
@@ -288,20 +274,6 @@ export function addResolution(userId: string) {
  */
 export function resetLeaderboard() {
   lbForToday = [];
-}
-
-/**
- * Sets the canvas ID for the ticket queue channel canvas.
- */
-export function setCanvasId(id: string | null) {
-  canvasId = id;
-}
-
-/**
- * Gets the canvas ID for the ticket queue channel canvas.
- */
-export function getCanvasId(): string | null {
-  return canvasId;
 }
 
 /**

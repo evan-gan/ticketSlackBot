@@ -1,5 +1,6 @@
 import * as http from 'http';
-import { UNCLAIMED_TEXT, CLAIMED_TEXT_FORMAT, WEB_PAGE_REFRESH_SECONDS } from './constants';
+import * as crypto from 'crypto';
+import { UNCLAIMED_TEXT, CLAIMED_TEXT_FORMAT, WEB_PAGE_REFRESH_SECONDS, WEB_PASSWORD } from './constants';
 
 /**
  * HTTP server that serves the ticket queue as an HTML page.
@@ -106,6 +107,31 @@ function renderQueuePage(): string {
 `;
 }
 
+/**
+ * Checks HTTP Basic auth against WEB_PASSWORD (any username accepted).
+ * Returns true if access is allowed; otherwise sends the 401 challenge itself.
+ */
+function checkAuth(req: http.IncomingMessage, res: http.ServerResponse): boolean {
+  if (!WEB_PASSWORD) return true; // auth disabled
+
+  const header = req.headers.authorization || '';
+  if (header.startsWith('Basic ')) {
+    const decoded = Buffer.from(header.slice(6), 'base64').toString();
+    const password = decoded.slice(decoded.indexOf(':') + 1);
+    const expected = Buffer.from(WEB_PASSWORD);
+    const given = Buffer.from(password);
+    if (given.length === expected.length && crypto.timingSafeEqual(given, expected)) {
+      return true;
+    }
+  }
+
+  res.writeHead(401, {
+    'WWW-Authenticate': 'Basic realm="Ticket Queue", charset="UTF-8"',
+    'Content-Type': 'text/plain',
+  }).end('Authentication required');
+  return false;
+}
+
 function readBody(req: http.IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     let data = '';
@@ -123,6 +149,8 @@ function readBody(req: http.IncomingMessage): Promise<string> {
  */
 export function startWebServer(port: number, logger: any, onResolve: ResolveHandler): http.Server {
   const server = http.createServer(async (req, res) => {
+    if (!checkAuth(req, res)) return;
+
     const path = (req.url || '/').split('?')[0];
 
     if ((req.method === 'GET' || req.method === 'HEAD') && path === '/') {

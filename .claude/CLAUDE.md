@@ -45,7 +45,7 @@ Set in `.env` (see `.env.example`). **Required** (bot throws on startup if missi
 - `TICKETS_CHANNEL` — staff channel where the queue lives
 - `DATABASE_URL` — `postgres://user:pass@host:port/db`
 
-**Optional** (have defaults): `SLACK_WORKSPACE_DOMAIN`, `AI_API_KEY` (Groq; AI skipped if absent), `FAQ_BASE_URL`, `FAQ_MARKDOWN_URL`, `WEB_PORT` (queue web page port, default 3000, `0` disables), and message-text overrides like `WELCOME_MESSAGE_TEXT`, `TICKET_RESOLVED_MESSAGE`. All secrets come from env — none are hardcoded.
+**Optional** (have defaults): `SLACK_WORKSPACE_DOMAIN`, `AI_API_KEY` (Groq; AI skipped if absent), `FAQ_BASE_URL`, `FAQ_MARKDOWN_URL`, `WEB_PORT` (queue web page port, default 3000, `0` disables), `WEB_PASSWORD` (basic-auth gate for the web page; unset = open), and message-text overrides like `WELCOME_MESSAGE_TEXT`, `TICKET_RESOLVED_MESSAGE`. All secrets come from env — none are hardcoded.
 
 ---
 
@@ -87,7 +87,7 @@ ticketSlackBot/
 - **AI FAQ auto-answers** → [src/hcai.ts](../src/hcai.ts). Fetches + parses FAQ markdown into slugged entries, `checkFAQ` asks Groq which slugs match, returns linked message or `null`. Entries are cached.
 - **Slack rate limiting** → [src/rateLimiter.ts](../src/rateLimiter.ts). `EndpointRateLimiter` (sliding-window, priority queue), `RateLimiterManager`, and the `rateLimitedCall(endpoint, fn, priority)` wrapper used for every Slack call.
 - **Restart recovery** → [src/startupRecovery.ts](../src/startupRecovery.ts). `scanForMissedMessages`, `initializeQueueOnStartup`, `performStartupRecovery`, `checkThreadStatus`.
-- **Queue web page** → [src/webServer.ts](../src/webServer.ts). `startWebServer` (built-in `http`, port from `WEB_PORT`, default 3000, `0` disables) serves `GET /` — the auto-refreshing live queue, with a manual-resolve override button per ticket (`POST /resolve`, handler injected from `main.ts` → `resolveTicket` as `'system'`). `updateQueue` pushes each queue state via `setQueueSnapshot`, so page loads never hit the Slack API. The endpoint is unauthenticated — don't expose the port publicly as-is.
+- **Queue web page** → [src/webServer.ts](../src/webServer.ts). `startWebServer` (built-in `http`, port from `WEB_PORT`, default 3000, `0` disables) serves `GET /` — the auto-refreshing live queue, with a manual-resolve override button per ticket (`POST /resolve`, handler injected from `main.ts` → `resolveTicket` as `'system'`). `updateQueue` pushes each queue state via `setQueueSnapshot`, so page loads never hit the Slack API. Protected by HTTP Basic auth when `WEB_PASSWORD` is set (any username); unauthenticated when unset — set it in production. Deployed at tickets.horizons.hackclub.com via Coolify.
 - **Formatting helpers** → [src/utils.ts](../src/utils.ts). `formatTs`, `getThreadUrl`, `createWelcomeBlocks`, `splitQueueMessage`.
 - **Tuning behavior** → [src/constants.ts](../src/constants.ts). Grace period, check/save/refresh/leaderboard intervals, all message strings (most read from env), startup-notification user, and `ENDPOINT_RATE_LIMITS` (per-endpoint Slack limits).
 

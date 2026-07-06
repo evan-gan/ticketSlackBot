@@ -99,6 +99,13 @@ export const WEB_PORT = process.env.WEB_PORT !== undefined ? Number(process.env.
  */
 export const WEB_PAGE_REFRESH_SECONDS = 30;
 
+/**
+ * Password for the queue web page (HTTP Basic auth, any username).
+ * If unset, the page is served without authentication — fine for local dev,
+ * required in production since the page can resolve tickets.
+ */
+export const WEB_PASSWORD = process.env.WEB_PASSWORD || '';
+
 // ============================================
 // STARTUP & LOGGING
 // ============================================
